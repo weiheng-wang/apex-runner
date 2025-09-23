@@ -717,7 +717,7 @@ class Game:
         surf = self.font.render(txt, True, (200, 220, 255))
         self.screen.blit(surf, (hud_x, hud_y))
 
-        controls = "WASD/Arrows move (relative to camera), Space jump, E hold to mantle (after fall), R reset, LMB rotate, Wheel zoom, G hold sprint"
+        controls = "WASD/Arrow Keys (move), Space (jump), E (mantle), R (reset)"
         surf2 = self.font.render(controls, True, (170,190,210))
         self.screen.blit(surf2, (12, WIN_H - 26))
 
@@ -727,7 +727,8 @@ class Game:
             x = WIN_W - bar_w - 18; y = 18
             pygame.draw.rect(self.screen, (28,28,32), (x, y, bar_w, bar_h), border_radius=4)
             fill = int((self.sprint_energy / SPRINT_MAX_ENERGY) * (bar_w - 2))
-            pygame.draw.rect(self.screen, (80,200,220), (x+1, y+1, fill, bar_h-2), border_radius=3)
+            charge_color = (100,200,100) if self.sprint_energy > 0.3 else (200,100,100)
+            pygame.draw.rect(self.screen, charge_color, (x+1, y+1, fill, bar_h-2), border_radius=3)
             lbl = self.font.render("Sprint (G)", True, (200, 220, 240))
             self.screen.blit(lbl, (x, y - 18))
 
@@ -748,7 +749,7 @@ class Game:
     def menu_draw(self):
         s = self.screen
         s.fill((8,8,12))
-        title = self.big.render("ROOFTOP PARKOUR (restored)", True, (255,200,220)); s.blit(title, (WIN_W//2 - title.get_width()//2, 80))
+        title = self.big.render("ROOFTOP PARKOUR", True, (255,200,220)); s.blit(title, (WIN_W//2 - title.get_width()//2, 80))
         lines = ["Start", "Level Select", "Quit"]
         for i, l in enumerate(lines):
             color = (255,220,160) if i == self.menu_index else (180,200,230)
