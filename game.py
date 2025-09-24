@@ -1,17 +1,17 @@
 import pygame, sys, math, random, time
-from math import sin, cos, radians, sqrt, isfinite
+from math import radians, sqrt, isfinite
 
 # ---------- Settings ----------
 WIN_W, WIN_H = 1200, 720
 FPS = 60
 
-# Camera orbit defaults
+# Camera
 CAM_DIST_DEFAULT = 24.0
 CAM_PITCH_DEFAULT = radians(18.0)
 CAM_PITCH_MIN = radians(-8.0)
 CAM_PITCH_MAX = radians(58.0)
-CAM_DIST_MIN = 10.0
-CAM_DIST_MAX = 48.0
+CAM_DIST_MIN = 8.0
+CAM_DIST_MAX = 72.0
 
 # Player / physics
 GRAVITY = -32.0
@@ -20,30 +20,28 @@ WALK_SPEED = 10.6
 SPRINT_SPEED = 22.0
 PLAYER_HEIGHT = 1.9
 
-# Sprint energy (seconds of sprint)
+# Player render base
+PLAYER_BASE_W = 28
+PLAYER_BASE_H = 56
+
+# Sprint
 SPRINT_MAX_ENERGY = 3.2
-SPRINT_DRAIN_RATE = 1.0   # energy per second while sprinting
-SPRINT_REGEN_RATE = 0.45  # energy per second when not sprinting
+SPRINT_DRAIN_RATE = 1.0
+SPRINT_REGEN_RATE = 0.45
 
-# Mantle animation settings
-MANTLE_TIME = 0.72  # seconds of continuous hold to complete mantle
+# Mantle
+MANTLE_TIME = 0.72
 
-# Simple building geometry
+# Building
 BUILDING_DEPTH = 14.0
 EPS = 1e-5
+VIS_MULT = 3.0  # visual height multiplier (visual top used for collisions/render)
 
-# ---------- 10 Deterministic Levels ----------
-LEVELS = []
-LEVELS.append({'num_buildings': 7,  'lanes': [-10, 0, 10],                    'min_w':5.5,  'max_w':8.0,  'min_h':12.0, 'max_h':18.0, 'gap_min':1.6, 'gap_max':3.2})
-LEVELS.append({'num_buildings': 8,  'lanes': [-16, -4, 8, 20],               'min_w':6.0,  'max_w':8.6,  'min_h':14.0, 'max_h':20.0, 'gap_min':1.8, 'gap_max':3.6})
-LEVELS.append({'num_buildings': 9,  'lanes': [-20, -6, 6, 18],               'min_w':6.0,  'max_w':9.2,  'min_h':15.0, 'max_h':22.0, 'gap_min':2.0, 'gap_max':4.0})
-LEVELS.append({'num_buildings':10,  'lanes': [-22, -10, 4, 16, 28],         'min_w':6.2,  'max_w':10.0, 'min_h':16.0, 'max_h':24.0, 'gap_min':2.2, 'gap_max':4.6})
-LEVELS.append({'num_buildings':11,  'lanes': [-24, -12, 0, 12, 24],         'min_w':6.4,  'max_w':10.8, 'min_h':18.0, 'max_h':28.0, 'gap_min':2.4, 'gap_max':5.0})
-LEVELS.append({'num_buildings':11,  'lanes': [-26, -14, -2, 10, 22],        'min_w':6.8,  'max_w':11.4, 'min_h':20.0, 'max_h':30.0, 'gap_min':2.6, 'gap_max':5.4})
-LEVELS.append({'num_buildings':12,  'lanes': [-28, -16, -4, 8, 20, 32],     'min_w':7.0,  'max_w':12.0, 'min_h':22.0, 'max_h':34.0, 'gap_min':2.8, 'gap_max':5.8})
-LEVELS.append({'num_buildings':13,  'lanes': [-30, -18, -6, 6, 18, 30],     'min_w':7.2,  'max_w':12.5, 'min_h':24.0, 'max_h':36.0, 'gap_min':3.0, 'gap_max':6.2})
-LEVELS.append({'num_buildings':13,  'lanes': [-32, -20, -8, 4, 16, 28, 40], 'min_w':7.6,  'max_w':13.2, 'min_h':26.0, 'max_h':40.0, 'gap_min':3.2, 'gap_max':6.6})
-LEVELS.append({'num_buildings':14,  'lanes': [-34, -22, -10, 2, 14, 26, 38], 'min_w':8.0,  'max_w':13.8, 'min_h':28.0, 'max_h':44.0, 'gap_min':3.4, 'gap_max':7.0})
+# Player collision
+PLAYER_RADIUS = 0.45
+
+# Levels
+NUM_LEVELS = 20
 
 # ---------- Helpers ----------
 def clamp(v,a,b): return max(a, min(b, v))
@@ -70,7 +68,6 @@ def cross(a: Vec3, b: Vec3):
 def dot(a: Vec3, b: Vec3):
     return a.x*b.x + a.y*b.y + a.z*b.z
 
-# Reachability math (used to ensure levels are solvable)
 def max_jump_horizontal(speed, jump_v=JUMP_V, gravity=GRAVITY):
     g = abs(gravity)
     if g <= 0: return 0.0
@@ -82,7 +79,7 @@ def max_jump_up(jump_v=JUMP_V, gravity=GRAVITY):
     if g <= 0: return 0.0
     return (jump_v * jump_v) / (2.0 * g)
 
-# ---------- Projection (camera basis) ----------
+# ---------- Projection ----------
 def build_camera_basis(cam_pos: Vec3, target: Vec3, world_up=Vec3(0,1,0)):
     forward = normalize(Vec3(target.x - cam_pos.x, target.y - cam_pos.y, target.z - cam_pos.z))
     right = normalize(cross(forward, world_up))
@@ -102,63 +99,91 @@ def project_point(p: Vec3, cam_pos: Vec3, forward: Vec3, right: Vec3, up: Vec3, 
 
 def safe_poly(poly):
     if not poly or len(poly) < 3: return False
+    try:
+        xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+    except Exception:
+        return False
     for x,y in poly:
         if not isfinite(x) or not isfinite(y): return False
-    xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
     if (max(xs)-min(xs)) > WIN_W*4 or (max(ys)-min(ys)) > WIN_H*4: return False
     if (max(xs)-min(xs)) < 0.15 and (max(ys)-min(ys)) < 0.15: return False
     return True
 
 # ---------- Building ----------
 class Building:
-    def __init__(self, x_center, z_start, width, depth, height):
+    def __init__(self, x_center, z_start, width, depth, height_physical):
         self.x = float(x_center)
         self.z = float(z_start)
         self.w = float(width)
         self.d = float(depth)
-        self.h = float(height)
+        self.h = float(height_physical)                # gameplay physical height (kept)
+        self.h_visual = float(height_physical) * VIS_MULT  # visual/collision height
+
     def roof_center_z(self):
         return self.z + self.d * 0.5
+
     def contains_roof(self, x, z):
-        # roof containment: x within roof rect and z within [z, z+d]
-        if (x >= self.x - self.w/2 - 1e-6) and (x <= self.x + self.w/2 + 1e-6) and (z >= self.z - 1e-6) and (z <= self.z + self.d + 1e-6):
-            return True
-        return False
+        return (x >= self.x - self.w/2 - 1e-6) and (x <= self.x + self.w/2 + 1e-6) and (z >= self.z - 1e-6) and (z <= self.z + self.d + 1e-6)
+
+# ---------- LEVELS: programmatic ramp 1..20 ----------
+LEVELS = []
+for i in range(NUM_LEVELS):
+    difficulty = i / (NUM_LEVELS - 1)
+    num_buildings = int(5 + difficulty * 18)  # grows
+    lanes_count = 1 + int(difficulty * 7)
+    spread = 6 + difficulty * 36
+    if lanes_count > 1:
+        lanes = [(-spread/2.0) + j * (spread/(lanes_count-1)) for j in range(lanes_count)]
+    else:
+        lanes = [0.0]
+    min_w = 5.0 + difficulty * 3.0
+    max_w = 7.0 + difficulty * 6.0
+    min_h = 6.0 + difficulty * 10.0
+    max_h = min_h + 6.0 + difficulty * 30.0
+    gap_min = 1.0 + difficulty * 2.6
+    gap_max = gap_min + 1.2 + difficulty * 3.8
+    LEVELS.append({'num_buildings':num_buildings, 'lanes':lanes,
+                   'min_w':min_w, 'max_w':max_w, 'min_h':min_h, 'max_h':max_h,
+                   'gap_min':gap_min, 'gap_max':gap_max})
 
 # ---------- Game ----------
 class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
-        pygame.display.set_caption("Rooftop — restored")
+        pygame.display.set_caption("Apex Runner")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("consolas", 18)
+        self.small_font = pygame.font.SysFont("consolas", 13)
         self.big = pygame.font.SysFont("consolas", 34, bold=True)
 
-        # camera orbit params
-        self.cam_yaw = 0.0
+        # start facing buildings
+        self.cam_yaw = math.pi
         self.cam_pitch = CAM_PITCH_DEFAULT
         self.cam_dist = CAM_DIST_DEFAULT
         self.yaw_sens = 0.0045
         self.pitch_sens = 0.0045
 
         self.level_index = 0
-        self.seed_base = 12345  # deterministic seed base
+        self.seed_base = 12345
         self.lmb_held = False
 
         self.state = 'menu'
         self.menu_index = 0
         self.selected_level = 0
 
-        # create first world
+        self.bg_offset = 0.0
+        self.prev_player_z = 0.0
+
+        # in-memory best times
+        self.best_times = {}
+
         self.reset_world(0)
 
     def level_seed(self, idx):
         return self.seed_base + idx * 7919
 
     def reset_world(self, level_idx=0):
-        # reset camera and regenerate deterministic level
-        self.cam_yaw = 0.0
         self.cam_pitch = CAM_PITCH_DEFAULT
         self.cam_dist = CAM_DIST_DEFAULT
 
@@ -166,101 +191,136 @@ class Game:
         cfg = LEVELS[self.level_index]
         rng = random.Random(self.level_seed(self.level_index))
 
-        # Generate buildings deterministically and ensure reachability
         self.buildings = []
         z = 10.0
         prev = None
-        horiz_reach = max_jump_horizontal(cfg['player_sprint'] if 'player_sprint' in cfg else SPRINT_SPEED, JUMP_V, GRAVITY)
-        max_up = max_jump_up(JUMP_V, GRAVITY) * 0.98 + 1.6
+
+        horiz_reach = max_jump_horizontal(SPRINT_SPEED, JUMP_V, GRAVITY)
+        max_up = max_jump_up(JUMP_V, GRAVITY)
 
         i = 0
         tries = 0
-        while i < cfg['num_buildings'] and tries < 10000:
+        while i < cfg['num_buildings'] and tries < 20000:
             tries += 1
             lane = rng.choice(cfg['lanes'])
             w = rng.uniform(cfg['min_w'], cfg['max_w'])
             midh = (cfg['min_h'] + cfg['max_h']) / 2.0
-            h = max(8.0, rng.gauss(midh, (cfg['max_h'] - cfg['min_h']) * 0.12))
+            h_phys = max(6.0, rng.gauss(midh, (cfg['max_h'] - cfg['min_h']) * 0.12))
+
             if prev:
-                # clamp vertical step to reasonable values so most jumps are possible
-                if h - prev.h > max_up:
-                    h = prev.h + max_up * rng.uniform(0.6, 1.0)
-                if prev.h - h > 45.0:
-                    h = prev.h - 45.0 * rng.uniform(0.4, 1.0)
+                # restrict vertical changes in visual space
+                max_visual_up = max_up * 0.98
+                if (h_phys * VIS_MULT - prev.h_visual) > max_visual_up:
+                    allowed_phys_delta = max_visual_up / VIS_MULT
+                    h_phys = prev.h + allowed_phys_delta * rng.uniform(0.6, 1.0)
+                if prev.h - h_phys > 45.0:
+                    h_phys = prev.h - 45.0 * rng.uniform(0.4, 1.0)
+
             gap = rng.uniform(cfg['gap_min'], cfg['gap_max'])
             x = lane + rng.uniform(-1.6, 1.6)
-            b = Building(x, z, w, BUILDING_DEPTH, h)
+            b = Building(x, z, w, BUILDING_DEPTH, h_phys)
 
-            # quick reachability check: center-to-center horizontal distance
-            if prev:
+            # attempt to ensure center-to-center distance feasible; iteratively nudge/shrink gap
+            feasible = False
+            if prev is None:
+                feasible = True
+            else:
+                attempts_inner = 0
+                while attempts_inner < 6:
+                    prev_cz = prev.z + prev.d * 0.5
+                    cand_cz = b.z + b.d * 0.5
+                    dx = b.x - prev.x
+                    dz = cand_cz - prev_cz
+                    dist = math.hypot(dx, dz)
+                    if dist <= horiz_reach * 0.98:
+                        feasible = True
+                        break
+                    # try shrinking gap first
+                    if gap > cfg['gap_min'] * 0.6:
+                        gap = max(cfg['gap_min'], gap * 0.6)
+                        b.z = z  # will be updated below to z + d + gap, but keep b.z as z now
+                        # recompute cand_cz: still b.z + d*0.5 but we postpone setting final z until appended
+                    else:
+                        # nudge X toward prev.x
+                        if abs(b.x - prev.x) > 0.2:
+                            b.x = lerp(b.x, prev.x, 0.45)
+                        else:
+                            b.x = prev.x
+                    attempts_inner += 1
+                    # recompute b.z based on current z (not incremented yet)
+                    b.z = z
+                # final check
                 prev_cz = prev.z + prev.d * 0.5
                 cand_cz = b.z + b.d * 0.5
                 dx = b.x - prev.x
                 dz = cand_cz - prev_cz
-                if math.hypot(dx, dz) > horiz_reach * 0.98:
-                    # try to reduce gap and nudge lane once to attempt feasibility
-                    gap = max(cfg['gap_min'], gap * 0.5)
-                    b.z = z  # keep b.z same (we haven't incremented z yet)
+                dist = math.hypot(dx, dz)
+                feasible = dist <= horiz_reach * 1.0001
+
+            if not feasible:
+                # skip candidate and try new lane/height
+                continue
+
+            # finalize
             self.buildings.append(b)
             prev = b
             z += BUILDING_DEPTH + gap
             i += 1
 
-        if len(self.buildings) < cfg['num_buildings']:
-            # fill remainder simply
-            while len(self.buildings) < cfg['num_buildings']:
-                x = rng.choice(cfg['lanes'])
-                w = rng.uniform(cfg['min_w'], cfg['max_w'])
-                h = rng.uniform(cfg['min_h'], cfg['max_h'])
-                b = Building(x, z, w, BUILDING_DEPTH, h)
-                self.buildings.append(b)
-                z += BUILDING_DEPTH + cfg['gap_min']
+        # pad if needed
+        while len(self.buildings) < cfg['num_buildings']:
+            x = rng.choice(cfg['lanes'])
+            w = rng.uniform(cfg['min_w'], cfg['max_w'])
+            h_phys = rng.uniform(cfg['min_h'], cfg['max_h'])
+            b = Building(x, z, w, BUILDING_DEPTH, h_phys)
+            self.buildings.append(b)
+            z += BUILDING_DEPTH + cfg['gap_min']
 
         self.buildings.sort(key=lambda bb: bb.z)
 
-        # choose deterministic start: FIRST building (ensures no building behind player)
+        # spawn on visual roof of first building
         start = self.buildings[0]
         self.player_x = start.x
         self.player_z = start.z + start.d * 0.5
-        self.player_y = start.h
+        self.player_y = start.h_visual + 0.08
         self.player_vy = 0.0
         self.player_on_ground = True
+
         self.player_walk = WALK_SPEED
         self.player_sprint = SPRINT_SPEED
         self.player_jump = JUMP_V
 
-        # sprint energy
         self.sprint_energy = SPRINT_MAX_ENERGY
         self.sprinting = False
 
-        # mantling state
         self.mantling = False
         self.mantle_target = None
         self.mantle_progress = 0.0
         self.mantle_start_pos = None
         self.mantle_end_pos = None
 
-        # falling flags
-        self.fell_off = False         # true if player left ground by falling (not by jump)
-        self.left_by_jump = False     # true if last departure from ground was a jump
+        self.fell_off = False
+        self.left_by_jump = False
         self.prev_on_ground = True
 
         self.time_start = time.time()
-        self.score_dist = 0.0
         self.particles = []
 
-        # set camera around player now
-        self.update_camera_immediate()
+        # remove any powerups (user asked)
+        self.powerups = []
+
+        self.bg_offset = 0.0
+        self.prev_player_z = self.player_z
 
         self.level_completed = False
         self.victory_timer = 0.0
         self.respawn_cooldown = 0.0
+        self.completion_time = None
 
-        # level start message timer
-        self.level_message_timer = 2.4
+        self.level_message_timer = 2.0
 
-        # flush mouse rel to avoid sudden jumps
         pygame.mouse.get_rel()
+        self.update_camera_immediate()
 
     def update_camera_immediate(self):
         px = self.player_x
@@ -285,26 +345,16 @@ class Game:
                                    'life': random.uniform(0.18,0.45)})
 
     def begin_mantle(self, target_building):
-        # start animated mantling (do not instantly teleport)
-        # Build start & end positions so that mantling is primarily vertical (X/Z remain mostly constant)
+        if target_building is None: return
         self.mantling = True
         self.mantle_target = target_building
         self.mantle_progress = 0.0
-        # clamp player's current x into roof horizontal bounds slightly inside edge
         end_x = clamp(target_building.x, target_building.x - target_building.w/2 + 0.8, target_building.x + target_building.w/2 - 0.8)
-        # start X is player's current X but nudged to end_x if extremely outside
         start_x = clamp(self.player_x, target_building.x - target_building.w, target_building.x + target_building.w)
-        # keep Z stable (vertical climb), but nudge slightly so player ends centered on roof center z
         start_z = self.player_z
-        end_z = target_building.z + target_building.d * 0.5
-        # Vertical end at roof height
-        end_y = target_building.h
-        # set start and end positions
+        end_y = target_building.h_visual + 0.02
         self.mantle_start_pos = Vec3(start_x, self.player_y, start_z)
-        # end X same as start_x (vertical climb), end Z keep original start_z (vertical), but nudge Z a tiny bit
-        # we keep X and Z largely unchanged so player climbs straight up along the wall
         self.mantle_end_pos = Vec3(end_x, end_y, start_z)
-        # lock vertical velocity while mantling
         self.player_vy = 0.0
         self.player_on_ground = False
 
@@ -316,25 +366,16 @@ class Game:
         self.mantle_end_pos = None
 
     def attempt_mantle_start(self, inputs):
-        # Only allow mantling if player has fallen off (not for normal jumps/walks)
-        if not self.fell_off:
-            return None
-
-        # find a suitable building wall that's near the player horizontally and within vertical threshold
+        # If there's a valid candidate (close side & vertical), optionally begin mantle
         climb_thresh = max_jump_up(self.player_jump, GRAVITY) * 1.05 + 1.6
         best = None
         side_margin = 1.6
         for b in self.buildings:
-            # vertical distance between roof and player
-            vdelta = b.h - self.player_y
-            # ignore roofs way below or way above
+            vdelta = b.h_visual - self.player_y
             if vdelta < 0.4 or vdelta > climb_thresh:
                 continue
-            # check if player's position is close to side face horizontally:
-            # compute horizontal offset from roof center in x and z
             dx = self.player_x - b.x
             dz_forward = (b.z + b.d * 0.5) - self.player_z
-            # within depth extents (near the side face)
             in_z_range = (self.player_z >= b.z - 1.2) and (self.player_z <= b.z + b.d + 1.2)
             side_close = (abs(dx) <= b.w/2 + side_margin) and in_z_range
             if side_close:
@@ -343,111 +384,92 @@ class Game:
                     best = (score, b)
         if best:
             _, b = best
-            # if E held, begin mantling
+            # allow starting mantle only if E pressed
             if inputs.get('mantle', False):
                 self.begin_mantle(b)
             return b
         return None
 
     def respawn(self):
-        # deterministic respawn to first early building
         start = None
         for b in self.buildings:
             if b.z < 40.0:
                 start = b
                 break
-        if start is None:
-            start = self.buildings[0]
+        if start is None: start = self.buildings[0]
         self.player_x = start.x
         self.player_z = start.z + start.d * 0.5
-        self.player_y = start.h
+        self.player_y = start.h_visual + 0.08
         self.player_vy = 0.0
         self.player_on_ground = True
         self.respawn_cooldown = 0.25
         self.particles = []
-        # cancel any mantle in progress
         self.cancel_mantle()
-        # reset falling flags
         self.fell_off = False
         self.left_by_jump = False
         self.prev_on_ground = True
+        self.prev_player_z = self.player_z
+        self.update_camera_immediate()
 
     def update(self, dt, inputs):
-        if self.state != 'play':
-            return
+        if self.state != 'play': return
 
         if self.respawn_cooldown > 0:
             self.respawn_cooldown = max(0.0, self.respawn_cooldown - dt)
-
-        # level start message timer
         if self.level_message_timer > 0:
             self.level_message_timer = max(0.0, self.level_message_timer - dt)
 
-        # store previous on-ground state
         self.prev_on_ground = self.player_on_ground
 
-        # handle mantling if active: progress only while E held
+        # mantling
         if self.mantling:
-            # guard start positions
             if self.mantle_start_pos is None or self.mantle_end_pos is None or self.mantle_target is None:
                 self.cancel_mantle()
             else:
-                # progress only while mantle input held
                 if inputs.get('mantle', False):
                     self.mantle_progress += (dt / MANTLE_TIME)
                     if self.mantle_progress >= 1.0:
-                        # complete mantle: set Y to roof and X/Z to end values
                         self.player_x = self.mantle_end_pos.x
                         self.player_z = self.mantle_end_pos.z
                         self.player_y = self.mantle_end_pos.y
                         self.player_vy = 0.0
                         self.player_on_ground = True
                         self.spawn_particles(10)
-                        # reset falling flags since we are now on top
                         self.fell_off = False
                         self.left_by_jump = False
                         self.cancel_mantle()
-                # apply interpolation for visual gradual climb (vertical-first)
                 p = clamp(self.mantle_progress, 0.0, 1.0)
-                sx, sy, sz = self.mantle_start_pos.x, self.mantle_start_pos.y, self.mantle_start_pos.z
-                ex, ey, ez = self.mantle_end_pos.x, self.mantle_end_pos.y, self.mantle_end_pos.z
-                # primarily interpolate Y (vertical). X/Z remain largely at start_x to provide vertical climb feeling.
-                self.player_x = lerp(sx, ex, min(p, 0.15))   # tiny nudge horizontally, mostly vertical
-                self.player_y = lerp(sy, ey, p)
-                self.player_z = lerp(sz, ez, min(p, 0.05))   # nearly vertical
-                # while mantling, freeze other movement/physics
+                if self.mantle_start_pos is not None and self.mantle_end_pos is not None:
+                    sx, sy, sz = self.mantle_start_pos.x, self.mantle_start_pos.y, self.mantle_start_pos.z
+                    ex, ey, ez = self.mantle_end_pos.x, self.mantle_end_pos.y, self.mantle_end_pos.z
+                    self.player_x = lerp(sx, ex, min(p, 0.15))
+                    self.player_y = lerp(sy, ey, p)
+                    self.player_z = lerp(sz, ez, min(p, 0.05))
                 self.player_vy = 0.0
-                # update camera and skip rest of physics
                 self.update_camera_immediate()
                 return
 
-        # movement relative to camera yaw (W moves toward camera-forward on-screen)
+        # movement relative to camera
         yaw = self.cam_yaw
         forward_x = -math.sin(yaw)
         forward_z = -math.cos(yaw)
         right_x = math.cos(yaw)
         right_z = -math.sin(yaw)
 
-        in_left = inputs['left']
-        in_right = inputs['right']
-        in_up = inputs['up']
-        in_down = inputs['down']
-
-        move_lr = 0.0
-        move_fb = 0.0
+        in_left = inputs['left']; in_right = inputs['right']; in_up = inputs['up']; in_down = inputs['down']
+        move_lr = 0.0; move_fb = 0.0
         if in_left: move_lr -= 1.0
         if in_right: move_lr += 1.0
         if in_up: move_fb += 1.0
         if in_down: move_fb -= 0.6
 
-        # combine
         vx = forward_x * move_fb + right_x * move_lr
         vz = forward_z * move_fb + right_z * move_lr
         mag = math.hypot(vx, vz)
         if mag > 0.001:
             vx /= mag; vz /= mag
 
-        # sprint handling (G)
+        # sprint
         if inputs.get('sprint', False) and self.sprint_energy > 0.05 and (move_fb > 0.1 or move_lr != 0.0):
             speed = self.player_sprint
             self.sprinting = True
@@ -455,17 +477,34 @@ class Game:
         else:
             self.sprinting = False
             speed = self.player_walk
-            # regen when not sprinting
             self.sprint_energy = clamp(self.sprint_energy + SPRINT_REGEN_RATE * dt, 0.0, SPRINT_MAX_ENERGY)
 
         final_speed = speed
 
-        # apply movement
+        prev_x = self.player_x; prev_z = self.player_z
+
         self.player_x += vx * final_speed * dt
         self.player_z += vz * final_speed * dt
         self.player_x = clamp(self.player_x, -240.0, 240.0)
 
-        # jump input: set left_by_jump true here so landing logic distinguishes jump vs fall
+        # horizontal collision (use visual heights)
+        player_bottom = self.player_y
+        collided_building = None
+        for b in self.buildings:
+            bx0 = b.x - b.w/2 - PLAYER_RADIUS
+            bx1 = b.x + b.w/2 + PLAYER_RADIUS
+            bz0 = b.z - PLAYER_RADIUS
+            bz1 = b.z + b.d + PLAYER_RADIUS
+            if (self.player_x >= bx0 and self.player_x <= bx1 and
+                self.player_z >= bz0 and self.player_z <= bz1):
+                if player_bottom < b.h_visual - 0.01:
+                    collided_building = b
+                    break
+        if collided_building:
+            self.player_x = prev_x
+            self.player_z = prev_z
+
+        # jump
         if inputs['jump'] and self.player_on_ground and self.respawn_cooldown <= 0:
             self.player_vy = self.player_jump
             self.player_on_ground = False
@@ -476,43 +515,36 @@ class Game:
         self.player_vy += GRAVITY * dt
         self.player_y += self.player_vy * dt
 
-        # check roof landings: only allow landing if building is directly under (contains_roof)
-        # BUT if player previously fell (fell_off==True), do NOT auto-land (you must mantle or continue falling)
+        # landings (visual roofs)
         landed = None
         for b in self.buildings:
             if b.contains_roof(self.player_x, self.player_z):
-                if self.player_vy <= 1.2 and self.player_y <= b.h + 0.18:
+                if self.player_vy <= 1.2 and self.player_y <= b.h_visual + 0.18:
                     landed = b
                     break
         if landed:
-            # If the player had fallen off earlier, we disallow auto-landing (they should fall)
             if self.fell_off:
-                # disallow landing - keep falling
                 landed = None
             else:
-                # proceed to land normally
-                self.player_y = landed.h
+                self.player_y = landed.h_visual
                 self.player_vy = 0.0
                 self.player_on_ground = True
                 self.fell_off = False
                 self.left_by_jump = False
         else:
-            # if player falls past low threshold, respawn
-            if self.player_y <= -6.0:
+            if self.player_y <= -8.0:
                 self.respawn()
                 return
+            self.player_on_ground = False
 
-        # If we were on ground last frame and now not on ground and we didn't jump, that counts as "fell off"
         if self.prev_on_ground and not self.player_on_ground and not self.left_by_jump:
             self.fell_off = True
 
-        # attempt to start mantling when appropriate (shows hint / if E key pressed will start)
         mantle_candidate = self.attempt_mantle_start(inputs)
 
-        # update camera to follow player
         self.update_camera_immediate()
 
-        # update particles cheaply
+        # particles
         newparts = []
         for p in self.particles:
             p['life'] -= dt
@@ -523,25 +555,86 @@ class Game:
                 newparts.append(p)
         self.particles = newparts
 
-        # level completion
+        # background offset
+        z_delta = self.player_z - self.prev_player_z
+        self.prev_player_z = self.player_z
+        self.bg_offset += z_delta * 0.6
+
+        # completion
         last = self.buildings[-1]
         if self.player_z > last.z + last.d*0.6 and not self.level_completed:
             self.level_completed = True
             self.victory_timer = 1.0
+            self.completion_time = time.time() - self.time_start
 
         if self.level_completed:
             self.victory_timer -= dt
             if self.victory_timer <= 0:
-                # proceed to next level if exists
+                lvl = self.level_index
+                prev_best = self.best_times.get(lvl, None)
+                if self.completion_time is None:
+                    self.completion_time = time.time() - self.time_start
+                if prev_best is None or self.completion_time < prev_best - 1e-6:
+                    self.best_times[lvl] = round(self.completion_time, 3)
                 if self.level_index < len(LEVELS) - 1:
                     self.level_index += 1
                     self.reset_world(self.level_index)
                 else:
                     self.state = 'victory'
 
+    def draw_skyline_background(self):
+        s = self.screen
+        layers = 3
+        for layer in range(layers):
+            count = 28 - layer*6
+            y_base = WIN_H * (0.18 + layer * 0.06)
+            color_base = 18 + layer*24
+            parallax_mul = 0.6 - layer*0.18
+            spacing = WIN_W / max(1, count)
+            base_offset = (self.bg_offset * parallax_mul) % (spacing * 2)
+            for i in range(count):
+                x = (i * spacing - base_offset) % (WIN_W + spacing) - spacing/2
+                h = (30 + (i%7)*10 + layer*8) + math.sin(i*0.6 + layer*0.12) * 6
+                rect = pygame.Rect(int(x), int(y_base - h), int(spacing * 0.9), int(h))
+                c = (clamp(color_base+random.randint(-6,6),0,255), clamp(color_base+random.randint(-6,6),0,255), clamp(color_base+30+layer*6,0,255))
+                pygame.draw.rect(s, c, rect)
+
+        # small neon billboard with blue outline and scan line
+        bx = int(WIN_W*0.625); by = int(WIN_H*0.13)
+        bw = 220; bh = 56
+        # outer neon outline
+        outline = pygame.Surface((bw+20, bh+20), pygame.SRCALPHA)
+        for i in range(6):
+            a = int(40 - i*6)
+            pygame.draw.rect(outline, (30,140,200,a), (i, i, bw+20-2*i, bh+20-2*i), border_radius=10, width=2)
+        s.blit(outline, (bx-10, by-10))
+        # panel
+        panel = pygame.Surface((bw, bh), pygame.SRCALPHA)
+        panel.fill((8,10,14,220))
+        # subtle noise lines
+        for row in range(3):
+            yoff = 6 + row*14
+            pygame.draw.line(panel, (10,14,20,70), (8, yoff), (bw-8, yoff))
+        pygame.draw.rect(panel, (18,40,60), (4,4,bw-8,bh-8), border_radius=8, width=2)
+        s.blit(panel, (bx, by))
+
+        # neon text with small animated glow and a scan line
+        t = time.time() - getattr(self, 'time_start', 0.0)
+        title = "APEX CITY"
+        glow = self.big.render(title, True, (80,200,240))
+        glow.set_alpha(40 + int((math.sin(t*2.0) + 1.0) * 30))
+        s.blit(glow, (bx + 12, by + 6))
+        txt = self.big.render(title, True, (140,230,255))
+        s.blit(txt, (bx + 10, by + 4))
+        # scan line
+        scan_w = 160
+        scan_x = int(((t * 160) + (self.bg_offset*0.12)) % (bw + scan_w) - scan_w/2)
+        scan_rect = pygame.Rect(bx + scan_x, by + int(bh*0.72), int(scan_w*0.06), 3)
+        pygame.draw.rect(s, (80,200,255), scan_rect)
+
     def draw(self):
         s = self.screen
-        s.fill((10,10,18))
+        s.fill((8,8,12))
 
         # sky gradient
         for i in range(120):
@@ -549,19 +642,21 @@ class Game:
             color = (int(8 + a*12), int(12 + a*28), int(30 + a*60))
             pygame.draw.rect(s, color, (0, int(i * WIN_H / 240), WIN_W, int(WIN_H / 240)+1))
 
+        # skyline
+        self.draw_skyline_background()
+
         fov = 900.0
 
-        # collect face polygons for all building faces, compute average camera depth (cz)
+        # collect faces with visual heights
         face_list = []
         for idx, b in enumerate(self.buildings):
             x0 = b.x - b.w/2; x1 = b.x + b.w/2
             z0 = b.z; z1 = b.z + b.d
-            y0 = 0.0; y1 = b.h
-            verts = [
+            y0 = 0.0; y1 = b.h_visual
+            verts_world = [
                 Vec3(x0,y0,z0), Vec3(x1,y0,z0), Vec3(x1,y0,z1), Vec3(x0,y0,z1),
                 Vec3(x0,y1,z0), Vec3(x1,y1,z0), Vec3(x1,y1,z1), Vec3(x0,y1,z1)
             ]
-            # faces defined by 4 indices (consistent winding doesn't matter here)
             faces = [
                 (0,1,2,3),  # front (near z0)
                 (4,5,6,7),  # back  (near z1)
@@ -570,60 +665,124 @@ class Game:
                 (1,2,6,5),  # right
                 (0,3,7,4)   # left
             ]
-            # colors based on height for variety
-            base = clamp(int(70 + (b.h / 26.0) * 60), 40, 220)
-            face_color = (base-8, base-4, base//2)
-            side_color = (max(0, base-22), max(0, base-18), max(0, base//3))
-            top_color = (min(255, base+12), min(255, base+28), min(255, base+40))
+            base = clamp(int(60 + (b.h / 40.0) * 80), 40, 210)
+            face_color = (max(10, base-8), max(12, base-6), max(24, base+6))
+            side_color = (max(8, base-28), max(8, base-18), max(24, base+8))
+            top_color = (min(255, base+18), min(255, base+36), min(255, base+64))
 
             for fi, inds in enumerate(faces):
-                poly_world = [verts[i] for i in inds]
+                poly_world = [verts_world[i] for i in inds]
                 proj = [project_point(v, self.cam_pos, self.forward, self.right, self.up, fov) for v in poly_world]
                 poly2 = [(p[0], p[1]) for p in proj]
                 czs = [p[3] for p in proj]
                 avg_cz = sum(czs)/len(czs)
-                if avg_cz <= 0.05:
-                    continue
-                # choose color per face
+                if avg_cz <= 0.05: continue
                 if fi == 3:
                     col = top_color
                 elif fi in (2,):
-                    col = (28,28,30)
+                    col = (12,12,14)
                 elif fi in (1,):
                     col = side_color
                 else:
                     col = face_color
-                face_list.append({'cz': avg_cz, 'poly': poly2, 'col': col, 'b_idx': idx})
+                face_list.append({'cz': avg_cz, 'poly': poly2, 'col': col, 'b_idx': idx, 'proj': proj,
+                                  'face_idx': fi, 'poly_world': poly_world, 'building': b})
 
-        # sort faces far->near so nearer faces draw last (occlude behind ones)
+        # sort far->near
         face_list.sort(key=lambda it: it['cz'], reverse=True)
 
-        # draw faces
+        # draw faces and embedded rectangular windows (world-space)
+        t = time.time() - getattr(self, 'time_start', 0.0)
         for f in face_list:
             poly = f['poly']
-            if safe_poly(poly):
-                try:
-                    pygame.draw.polygon(s, f['col'], poly)
-                    pygame.draw.polygon(s, (12,12,14), poly, 1)
-                except Exception:
-                    pass
+            if not poly or not safe_poly(poly):
+                continue
+            try:
+                pygame.draw.polygon(s, f['col'], poly)
+                pygame.draw.polygon(s, (10,10,12), poly, 1)
+                fi = f['face_idx']
+                if fi in (0,1,4,5):
+                    pw = f['poly_world']
+                    # choose top two by y, bottom two by y
+                    sorted_by_y = sorted(pw, key=lambda v: v.y, reverse=True)
+                    top_pts = sorted_by_y[:2]
+                    bot_pts = sorted_by_y[2:]
+                    # pair left/right by camera right axis
+                    pair = sorted(zip(top_pts, bot_pts), key=lambda pr: dot(pr[0], self.right))
+                    if len(pair) == 2:
+                        (tL, bL), (tR, bR) = (pair[0][0], pair[0][1]), (pair[1][0], pair[1][1])
+                        # estimate screen height to pick rows/cols
+                        mid_top = Vec3((tL.x + tR.x)/2.0, (tL.y + tR.y)/2.0, (tL.z + tR.z)/2.0)
+                        mid_bot = Vec3((bL.x + bR.x)/2.0, (bL.y + bR.y)/2.0, (bL.z + bR.z)/2.0)
+                        pt_top = project_point(mid_top, self.cam_pos, self.forward, self.right, self.up, fov)
+                        pt_bot = project_point(mid_bot, self.cam_pos, self.forward, self.right, self.up, fov)
+                        screen_h = abs(pt_bot[1] - pt_top[1]) if isfinite(pt_top[1]) and isfinite(pt_bot[1]) else 80
+                        rows = 3 if screen_h < 80 else 5 if screen_h < 180 else 8
+                        cols = 2 if screen_h < 80 else 4 if screen_h < 180 else 6
+                        pad_u = 0.10
+                        pad_v = 0.08
+                        idx_counter = 0
+                        for r in range(rows):
+                            u0 = (r + pad_u) / rows
+                            u1 = (r + 1 - pad_u) / rows
+                            for c in range(cols):
+                                v0 = (c + pad_v) / cols
+                                v1 = (c + 1 - pad_v) / cols
+                                # bilinear corners
+                                bottom_v0 = Vec3(lerp(bL.x, bR.x, v0), lerp(bL.y, bR.y, v0), lerp(bL.z, bR.z, v0))
+                                bottom_v1 = Vec3(lerp(bL.x, bR.x, v1), lerp(bL.y, bR.y, v1), lerp(bL.z, bR.z, v1))
+                                top_v0 = Vec3(lerp(tL.x, tR.x, v0), lerp(tL.y, tR.y, v0), lerp(tL.z, tR.z, v0))
+                                top_v1 = Vec3(lerp(tL.x, tR.x, v1), lerp(tL.y, tR.y, v1), lerp(tL.z, tR.z, v1))
+                                p00 = Vec3(lerp(bottom_v0.x, top_v0.x, u0), lerp(bottom_v0.y, top_v0.y, u0), lerp(bottom_v0.z, top_v0.z, u0))
+                                p10 = Vec3(lerp(bottom_v1.x, top_v1.x, u0), lerp(bottom_v1.y, top_v1.y, u0), lerp(bottom_v1.z, top_v1.z, u0))
+                                p11 = Vec3(lerp(bottom_v1.x, top_v1.x, u1), lerp(bottom_v1.y, top_v1.y, u1), lerp(bottom_v1.z, top_v1.z, u1))
+                                p01 = Vec3(lerp(bottom_v0.x, top_v0.x, u1), lerp(bottom_v0.y, top_v0.y, u1), lerp(bottom_v0.z, top_v0.z, u1))
+                                quad_world = [p00, p10, p11, p01]
+                                quad_proj = [project_point(q, self.cam_pos, self.forward, self.right, self.up, fov) for q in quad_world]
+                                quad = [(q[0], q[1]) for q in quad_proj]
+                                if safe_poly(quad):
+                                    # animated subtle glow (time + index)
+                                    glow = 0.6 + 0.4 * math.sin(t * 2.0 + idx_counter * 0.42)
+                                    rcol = int(clamp(28 * glow, 12, 60))
+                                    gcol = int(clamp(85 * glow, 40, 120))
+                                    bcol = int(clamp(110 * glow, 60, 160))
+                                    pygame.draw.polygon(s, (rcol, gcol, bcol), quad)
+                                    pygame.draw.polygon(s, (10,10,12), quad, 1)
+                                idx_counter += 1
+            except Exception:
+                continue
 
-        # draw player as simple capsule on top
+        # draw player (improved but basic stylized silhouette)
         ppos = Vec3(self.player_x, self.player_y + PLAYER_HEIGHT*0.25, self.player_z)
         psx, psy, psc, pcz = project_point(ppos, self.cam_pos, self.forward, self.right, self.up, fov)
-        if isfinite(psx) and isfinite(psy) and isfinite(psc) and psc > 0:
-            sc = clamp(psc, 0.02, 6.5)
-            pw = int(clamp(22*sc, 10, 64))
-            ph = int(clamp(40*sc, 14, 140))
-            shadow = pygame.Surface((pw*2, max(4,int(pw*0.5))), pygame.SRCALPHA)
-            pygame.draw.ellipse(shadow, (0,0,0,150), shadow.get_rect())
+
+        if isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0:
+            # scale by camera distance (closer => larger)
+            scale = clamp((CAM_DIST_DEFAULT / max(1e-3, self.cam_dist)), 0.35, 3.6)
+            pw = max(12, int(PLAYER_BASE_W * scale))
+            ph = max(18, int(PLAYER_BASE_H * scale))
+            # shadow
+            shadow_w = pw * 1.6; shadow_h = max(4, int(pw * 0.32))
+            shadow = pygame.Surface((int(shadow_w), shadow_h), pygame.SRCALPHA)
+            pygame.draw.ellipse(shadow, (0,0,0,160), shadow.get_rect())
             s.blit(shadow, (int(psx - shadow.get_width()//2), int(psy - ph*0.18 + shadow.get_height()//2)))
-            body = pygame.Rect(int(psx - pw//2), int(psy - ph), pw, ph)
-            pygame.draw.rect(s, (34,34,38), body, border_radius=max(5, pw//4))
-            rim = (220, 190, 140)
-            pygame.draw.rect(s, rim, body, width=max(1, pw//12), border_radius=max(4,pw//4))
-            head_w = int(pw*0.6); head_h = int(ph*0.26)
-            pygame.draw.ellipse(s, rim, (int(psx - head_w//2), int(psy - ph - head_h//2), head_w, head_h))
+            # torso (dark but with mild accent)
+            body_rect = pygame.Rect(int(psx - pw//2), int(psy - ph), pw, ph)
+            pygame.draw.rect(s, (28,28,30), body_rect, border_radius=max(6, pw//6))
+            # chest panel
+            chest = pygame.Rect(int(psx - pw*0.28), int(psy - int(ph * 0.78)), int(pw*0.56), int(ph*0.44))
+            pygame.draw.rect(s, (46,58,68), chest, border_radius=4)
+            # shoulder pads
+            sp_w = int(pw*0.28); sp_h = int(ph*0.18)
+            pygame.draw.rect(s, (36,36,40), (int(psx - pw//2 - 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
+            pygame.draw.rect(s, (36,36,40), (int(psx + pw//2 - sp_w + 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
+            # head (helmet)
+            head_w = int(pw*0.64); head_h = int(ph*0.28)
+            pygame.draw.ellipse(s, (38,38,40), (int(psx - head_w//2), int(psy - ph - head_h//2), head_w, head_h))
+            # visor subtle
+            visor = pygame.Surface((int(head_w*0.6), int(head_h*0.36)), pygame.SRCALPHA)
+            pygame.draw.ellipse(visor, (80,120,140,140), visor.get_rect())
+            s.blit(visor, (int(psx - (head_w*0.6)/2), int(psy - ph - head_h*0.5)))
 
         # particles
         for p in self.particles:
@@ -632,7 +791,7 @@ class Game:
                 r = int(clamp(2.0*pps, 1, 6))
                 pygame.draw.circle(s, (200,200,220), (int(ppx), int(ppy)), r)
 
-        # nearest candidate (for hint whether E is required)
+        # mantle/jump hints
         candidate = None; best = None
         for b in self.buildings:
             rz = b.z + b.d*0.5
@@ -643,47 +802,43 @@ class Game:
 
         mantle_available = False
         if candidate:
-            # check side closeness & vertical delta for mantle hint
-            vdelta = candidate.h - self.player_y
+            vdelta = candidate.h_visual - self.player_y
             side_margin = 1.6
             in_z_range = (self.player_z >= candidate.z - 1.2) and (self.player_z <= candidate.z + candidate.d + 1.2)
             side_close = (abs(self.player_x - candidate.x) <= candidate.w/2 + side_margin) and in_z_range
             climb_thresh = max_jump_up(self.player_jump, GRAVITY) * 1.05 + 1.6
-            if self.fell_off and side_close and 0.4 <= vdelta <= climb_thresh:
+            # show hint if fallen OR if player is slightly below roof (makes hint more reliable)
+            show_hint_condition = (self.fell_off or (self.player_y < candidate.h_visual - 0.6))
+            if show_hint_condition and side_close and 0.4 <= vdelta <= climb_thresh:
                 mantle_available = True
-                # draw slim rooftop outline for hint
                 x0 = candidate.x - candidate.w/2; x1 = candidate.x + candidate.w/2
                 z0 = candidate.z; z1 = candidate.z + candidate.d
-                y1 = candidate.h
+                y1 = candidate.h_visual
                 top_world = [Vec3(x0,y1,z0), Vec3(x1,y1,z0), Vec3(x1,y1,z1), Vec3(x0,y1,z1)]
                 top_proj = [project_point(v, self.cam_pos, self.forward, self.right, self.up, fov) for v in top_world]
                 poly_top = [(p[0], p[1]) for p in top_proj]
                 if safe_poly(poly_top):
-                    pygame.draw.polygon(s, (255, 80, 80, 80), poly_top, 3)
+                    pygame.draw.polygon(s, (255, 100, 100), poly_top, 3)
                     txt = self.big.render("HOLD E TO MANTLE", True, (255,200,200))
                     s.blit(txt, (WIN_W//2 - txt.get_width()//2, WIN_H - 120))
             else:
-                # if it's jumpable, show jumpable hint
                 horiz = math.hypot(abs(candidate.x - self.player_x), abs((candidate.z + candidate.d*0.5) - self.player_z))
                 can_horiz = horiz <= max_jump_horizontal(self.player_sprint, self.player_jump, GRAVITY) * 1.02
                 jump_up = max_jump_up(self.player_jump, GRAVITY)
                 if vdelta <= jump_up + 0.6 and can_horiz:
                     x0 = candidate.x - candidate.w/2; x1 = candidate.x + candidate.w/2
                     z0 = candidate.z; z1 = candidate.z + candidate.d
-                    y1 = candidate.h
+                    y1 = candidate.h_visual
                     top_world = [Vec3(x0,y1,z0), Vec3(x1,y1,z0), Vec3(x1,y1,z1), Vec3(x0,y1,z1)]
                     top_proj = [project_point(v, self.cam_pos, self.forward, self.right, self.up, fov) for v in top_world]
                     poly_top = [(p[0], p[1]) for p in top_proj]
                     if safe_poly(poly_top):
-                        pygame.draw.lines(s, (140,255,170), True, poly_top, 3)
-                        hint = self.font.render("Jumpable", True, (180,255,180))
-                        s.blit(hint, (WIN_W//2 - hint.get_width()//2, WIN_H - 120))
+                        pygame.draw.lines(s, (120,200,160), True, poly_top, 3)
 
-        # draw GOAL marker on final building
+        # goal marker
         final_b = self.buildings[-1]
-        # draw a small flag rectangle on its rooftop in screen space
-        top_world = [Vec3(final_b.x - final_b.w/4, final_b.h + 1.2, final_b.z + final_b.d*0.5),
-                     Vec3(final_b.x + final_b.w/4, final_b.h + 1.2, final_b.z + final_b.d*0.5)]
+        top_world = [Vec3(final_b.x - final_b.w/4, final_b.h_visual + 1.2, final_b.z + final_b.d*0.5),
+                     Vec3(final_b.x + final_b.w/4, final_b.h_visual + 1.2, final_b.z + final_b.d*0.5)]
         p1 = project_point(top_world[0], self.cam_pos, self.forward, self.right, self.up, fov)
         p2 = project_point(top_world[1], self.cam_pos, self.forward, self.right, self.up, fov)
         if all(isfinite(v) for v in (p1[0], p1[1], p2[0], p2[1])):
@@ -708,20 +863,37 @@ class Game:
         if self.level_completed:
             overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA); overlay.fill((0,0,0,120)); s.blit(overlay,(0,0))
             txt = self.big.render("LEVEL COMPLETE", True, (200,230,255)); s.blit(txt, (WIN_W//2 - txt.get_width()//2, WIN_H//2 - 40))
+            comp = self.completion_time if self.completion_time is not None else (time.time() - self.time_start)
+            best = self.best_times.get(self.level_index, None)
+            info = f"Time: {comp:.3f}s"
+            txt2 = self.font.render(info, True, (220,230,255)); s.blit(txt2, (WIN_W//2 - txt2.get_width()//2, WIN_H//2 + 12))
+            if best is not None:
+                best_txt = f"Best: {best:.3f}s"
+                txt3 = self.font.render(best_txt, True, (200,200,200)); s.blit(txt3, (WIN_W//2 - txt3.get_width()//2, WIN_H//2 + 36))
 
     def draw_ui(self, mantle_available=False):
         hud_x, hud_y = 12, 12
         lvl = self.level_index + 1
-        elapsed = int(time.time() - self.time_start)
-        txt = f"Level {lvl}   Time {elapsed}s"
+        elapsed = time.time() - self.time_start
+        txt = f"Level {lvl}   Time {elapsed:.3f}s"
         surf = self.font.render(txt, True, (200, 220, 255))
         self.screen.blit(surf, (hud_x, hud_y))
+
+        best = self.best_times.get(self.level_index, None)
+        if best is not None:
+            under = elapsed < best
+            color = (120, 230, 140) if under else (200,200,200)
+            status = "UNDER BEST" if under else ""
+            bt_surf = self.font.render(f"Best: {best:.3f}s  {status}", True, color)
+            self.screen.blit(bt_surf, (hud_x, hud_y + 22))
+        else:
+            info = self.font.render("Best: ---", True, (160,180,200))
+            self.screen.blit(info, (hud_x, hud_y + 22))
 
         controls = "WASD/Arrow Keys (move), Space (jump), E (mantle), R (reset)"
         surf2 = self.font.render(controls, True, (170,190,210))
         self.screen.blit(surf2, (12, WIN_H - 26))
 
-        # draw sprint bar when not full or currently sprinting
         if self.sprint_energy < SPRINT_MAX_ENERGY - 1e-3 or self.sprinting:
             bar_w = 220; bar_h = 12
             x = WIN_W - bar_w - 18; y = 18
@@ -732,7 +904,6 @@ class Game:
             lbl = self.font.render("Sprint (G)", True, (200, 220, 240))
             self.screen.blit(lbl, (x, y - 18))
 
-        # if mantling in progress show progress bar
         if self.mantling:
             bar_w = 260; bar_h = 14
             x = WIN_W//2 - bar_w//2; y = WIN_H - 86
@@ -741,15 +912,12 @@ class Game:
             pygame.draw.rect(self.screen, (255, 140, 120), (x+1, y+1, fill, bar_h-2), border_radius=5)
             lbl = self.font.render("Mantling...", True, (230, 210, 200))
             self.screen.blit(lbl, (x + bar_w//2 - lbl.get_width()//2, y - 20))
-        elif mantle_available:
-            # hint text is drawn in draw(); also small note here
-            pass
 
-    # ---------------- Menu / level select small UI ----------------
+    # ---------------- Menu / level select ----------------
     def menu_draw(self):
         s = self.screen
         s.fill((8,8,12))
-        title = self.big.render("ROOFTOP PARKOUR", True, (255,200,220)); s.blit(title, (WIN_W//2 - title.get_width()//2, 80))
+        title = self.big.render("APEX RUNNER", True, (255,200,220)); s.blit(title, (WIN_W//2 - title.get_width()//2, 80))
         lines = ["Start", "Level Select", "Quit"]
         for i, l in enumerate(lines):
             color = (255,220,160) if i == self.menu_index else (180,200,230)
@@ -759,19 +927,33 @@ class Game:
     def level_select_draw(self):
         s = self.screen
         s.fill((8,8,16))
-        title = self.big.render("Select Level (1-10) with Left/Right. Enter to play.", True, (220,200,255)); s.blit(title, (WIN_W//2 - title.get_width()//2, 60))
-        for i in range(len(LEVELS)):
-            x = 80 + i*100; y = 180; w = 84; h = 72
-            rect = pygame.Rect(x,y,w,h)
-            color = (58,48,78) if i != self.selected_level else (120,80,140)
-            pygame.draw.rect(s, color, rect, border_radius=8)
-            txt = self.font.render(f"Level {i+1}", True, (230,230,255)); s.blit(txt, (x+8, y+8))
+        title = self.big.render("Select Level (Arrows/Enter).", True, (220,200,255)); s.blit(title, (WIN_W//2 - title.get_width()//2, 40))
+        per_row = 10
+        start_x = 40
+        y_top = 110
+        spacing_x = (WIN_W - 2 * start_x) / per_row
+        for row in range(2):
+            for i in range(per_row):
+                idx = row * per_row + i
+                if idx >= len(LEVELS): continue
+                x = int(start_x + i * spacing_x); y = int(y_top + row * 120)
+                w = 96; h = 84
+                rect = pygame.Rect(x,y,w,h)
+                color = (58,48,78) if idx != self.selected_level else (100,70,140)
+                pygame.draw.rect(s, color, rect, border_radius=8)
+                txt = self.font.render(f"Level {idx+1}", True, (230,230,255)); s.blit(txt, (x+8, y+8))
+                bt = self.best_times.get(idx, None)
+                if bt is not None:
+                    bt_txt_surf = self.small_font.render(f"Best {bt:.3f}s", True, (120,230,140))
+                else:
+                    bt_txt_surf = self.small_font.render("Best ---", True, (140,140,160))
+                s.blit(bt_txt_surf, (x+6, y + 46))
 
     # ---------------- Main loop ----------------
     def run(self):
         running = True
         inputs = {'left':False,'right':False,'up':False,'down':False,'jump':False,'mantle':False,'sprint':False}
-        pygame.mouse.get_rel()  # flush
+        pygame.mouse.get_rel()
         while running:
             dt = self.clock.tick(FPS) / 1000.0
             events = pygame.event.get()
@@ -800,7 +982,6 @@ class Game:
                         if ev.key == pygame.K_e: inputs['mantle'] = True
                         if ev.key == pygame.K_g: inputs['sprint'] = True
                         if ev.key == pygame.K_r:
-                            # reset level AND camera angle (deterministic)
                             self.reset_world(self.level_index)
                         if ev.key == pygame.K_p:
                             self.state = 'paused' if self.state == 'play' else 'play'
@@ -829,10 +1010,15 @@ class Game:
                             running = False
                 elif self.state == 'level_select':
                     if ev.type == pygame.KEYDOWN:
+                        per_row = 10
                         if ev.key == pygame.K_LEFT:
                             self.selected_level = max(0, self.selected_level - 1)
                         if ev.key == pygame.K_RIGHT:
                             self.selected_level = min(len(LEVELS)-1, self.selected_level + 1)
+                        if ev.key == pygame.K_UP:
+                            self.selected_level = max(0, self.selected_level - per_row)
+                        if ev.key == pygame.K_DOWN:
+                            self.selected_level = min(len(LEVELS)-1, self.selected_level + per_row)
                         if ev.key == pygame.K_RETURN:
                             self.reset_world(self.selected_level); self.state = 'play'
                         if ev.key == pygame.K_ESCAPE:
@@ -844,17 +1030,16 @@ class Game:
                     if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                         self.state = 'menu'
 
-            # handle mouse rotation only while LMB held
+            # mouse rotation while LMB held
             if self.state == 'play' and self.lmb_held:
                 mx, my = pygame.mouse.get_rel()
                 self.cam_yaw += -mx * self.yaw_sens
                 self.cam_pitch += -my * self.pitch_sens
                 self.cam_pitch = clamp(self.cam_pitch, CAM_PITCH_MIN, CAM_PITCH_MAX)
             else:
-                # flush movement if not rotating
                 pygame.mouse.get_rel()
 
-            # update world
+            # update & draw
             if self.state == 'play':
                 self.update(dt, inputs)
                 self.draw()
@@ -874,6 +1059,5 @@ class Game:
         pygame.quit()
         sys.exit()
 
-# ---------- Run ----------
 if __name__ == "__main__":
     Game().run()
