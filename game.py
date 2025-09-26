@@ -28,17 +28,17 @@ PLAYER_BASE_W = 28
 PLAYER_BASE_H = 56
 
 # Sprint
-SPRINT_MAX_ENERGY = 3.2
-SPRINT_DRAIN_RATE = 1.0
+SPRINT_MAX_ENERGY = 3.5
+SPRINT_DRAIN_RATE = 0.5
 SPRINT_REGEN_RATE = 0.45
 
 # Mantle
-MANTLE_TIME = 0.72
+MANTLE_TIME = 0.7
 
 # Building
 BUILDING_DEPTH = 14.0
 EPS = 1e-5
-VIS_MULT = 3.0  # visual height multiplier (visual top used for collisions/render)
+VIS_MULT = 5.0  # visual height multiplier (visual top used for collisions/render)
 
 # Player collision
 PLAYER_RADIUS = 0.45
@@ -128,36 +128,49 @@ class Building:
     def contains_roof(self, x, z):
         return (x >= self.x - self.w/2 - 1e-6) and (x <= self.x + self.w/2 + 1e-6) and (z >= self.z - 1e-6) and (z <= self.z + self.d + 1e-6)
 
+# helper: check building overlap in world-space AABB (x vs z)
+def buildings_overlap(a: Building, b: Building, margin=0.08):
+    ax0 = a.x - (a.w*0.5 + margin); ax1 = a.x + (a.w*0.5 + margin)
+    az0 = a.z - margin; az1 = a.z + a.d + margin
+    bx0 = b.x - (b.w*0.5 + margin); bx1 = b.x + (b.w*0.5 + margin)
+    bz0 = b.z - margin; bz1 = b.z + b.d + margin
+    overlap_x = not (ax1 <= bx0 or bx1 <= ax0)
+    overlap_z = not (az1 <= bz0 or bz1 <= az0)
+    return overlap_x and overlap_z
+
 # ---------- LEVELS: programmatic ramp 1..10 with variation ----------
 LEVELS = []
 for i in range(NUM_LEVELS):
     d = i / max(1, NUM_LEVELS - 1)
-    num_buildings = int(3 + d * 18)
-    lanes_count = 1 + int(d * 4)
-    spread = 3 + d * 36
+    num_buildings = int(4 + d * 20)
+    lanes_count = 1 + int(d * 5)
+    spread = 4 + d * 48
     if lanes_count > 1:
         lanes = [(-spread/2.0) + j*(spread/(lanes_count-1)) for j in range(lanes_count)]
     else:
         lanes = [0.0]
-    min_w = 7.0 - d * 2.0
-    max_w = 8.0 + d * 6.0
+    # allow later levels to include skinnier buildings for challenge
+    min_w = max(1.6, 6.0 - d * 4.0)
+    max_w = 7.0 + d * 10.0
     min_h = 4.0 + d * 8.0
-    max_h = min_h + 6.0 + d * 24.0
-    gap_min = 0.6 + d * 2.6
-    gap_max = gap_min + 0.6 + d * 3.6
+    max_h = min_h + 6.0 + d * 28.0
+    gap_min = 0.6 + d * 3.0
+    gap_max = gap_min + 0.6 + d * 4.2
     LEVELS.append({'num_buildings': num_buildings, 'lanes': lanes,
                    'min_w': min_w, 'max_w': max_w, 'min_h': min_h, 'max_h': max_h,
                    'gap_min': gap_min, 'gap_max': gap_max})
 
+# make last level extra challenging
 if len(LEVELS) >= 10:
     L9 = LEVELS[-1]
-    L9['min_w'] = max(4.5, L9['min_w'] - 1.0)
-    L9['max_w'] = L9['max_w'] + 1.2
-    L9['gap_min'] = L9['gap_min'] + 1.4
-    L9['gap_max'] = L9['gap_max'] + 2.4
-    L9['min_h'] = L9['min_h'] + 4.0
-    L9['max_h'] = L9['max_h'] + 12.0
-    L9['lanes'] = L9['lanes'] + [x + 2.6 for x in L9['lanes']]
+    L9['min_w'] = max(1.4, L9['min_w'] - 1.0)
+    L9['max_w'] = L9['max_w'] + 2.6
+    L9['gap_min'] = L9['gap_min'] + 2.0
+    L9['gap_max'] = L9['gap_max'] + 3.0
+    L9['min_h'] = L9['min_h'] + 6.0
+    L9['max_h'] = L9['max_h'] + 18.0
+    # increase lane spread to force left/right movement
+    L9['lanes'] = L9['lanes'] + [x + 3.4 for x in L9['lanes']]
 
 # ---------- Audio helpers (OGG-only) ----------
 def try_load_sound(path):
@@ -214,6 +227,7 @@ class Game:
         if os.path.isfile(music_path):
             try:
                 pygame.mixer.music.load(music_path)
+                pygame.mixer.music.set_volume(0.3)
                 self.audio['music_loaded'] = True
             except Exception:
                 self.audio['music_loaded'] = False
@@ -221,16 +235,22 @@ class Game:
             self.audio['music_loaded'] = False
 
         # core sfx (OGG)
-        self.audio['jump'] = try_load_sound(os.path.join(assets_dir, "sfx_jump.ogg"))
-        self.audio['mantle'] = try_load_sound(os.path.join(assets_dir, "sfx_mantle.ogg"))
-        self.audio['goal'] = try_load_sound(os.path.join(assets_dir, "sfx_goal.ogg"))
-        self.audio['pickup'] = try_load_sound(os.path.join(assets_dir, "sfx_pickup.ogg"))
-        self.audio['whoosh'] = try_load_sound(os.path.join(assets_dir, "sfx_whoosh.ogg"))
-        self.audio['level_end'] = try_load_sound(os.path.join(assets_dir, "sfx_level_end.ogg"))
-        self.audio['car_loop'] = try_load_sound(os.path.join(assets_dir, "sfx_car_loop.ogg"))
+        self.audio['jump'] = try_load_sound(os.path.join(assets_dir, "jump.ogg"))
+        self.audio['mantle'] = try_load_sound(os.path.join(assets_dir, "mantle.ogg"))
+        self.audio['pickup'] = try_load_sound(os.path.join(assets_dir, "pickup.ogg"))
+        self.audio['level_end'] = try_load_sound(os.path.join(assets_dir, "level_end.ogg"))
+        self.audio['car_loop'] = try_load_sound(os.path.join(assets_dir, "car_loop.ogg"))
         # menu move/confirm (same SFX used for menu and level select)
-        self.audio['menu_move'] = try_load_sound(os.path.join(assets_dir, "sfx_menu_move.ogg"))
-        self.audio['menu_confirm'] = try_load_sound(os.path.join(assets_dir, "sfx_menu_confirm.ogg"))
+        self.audio['menu_move'] = try_load_sound(os.path.join(assets_dir, "menu_move.ogg"))
+        self.audio['menu_confirm'] = try_load_sound(os.path.join(assets_dir, "menu_confirm.ogg"))
+        # optional death sound and cutscene music
+        self.audio['death'] = try_load_sound(os.path.join(assets_dir, "death.ogg"))
+        cut_path = os.path.join(assets_dir, "cutscene_music.ogg")
+        if os.path.isfile(cut_path):
+            self.audio['cutscene_music_path'] = cut_path
+            self.audio['cutscene_music_loaded'] = True
+        else:
+            self.audio['cutscene_music_loaded'] = False
 
         # cutscene / camera freeze state
         self.cutscene_active = False
@@ -247,6 +267,18 @@ class Game:
         self.cutscene_car_channel = None
         self.cutscene_stars = self._generate_stars(140)
 
+        # music state tracking (so we only restart when explicitly requested)
+        self._music_started = False
+
+        # camera pan state after level complete (smooth shift)
+        self.cam_pan_active = False
+        self.cam_pan_t = 0.0
+        self.cam_pan_dur = 1.0
+        self.cam_pan_start_pos = None
+        self.cam_pan_start_target = None
+        self.cam_pan_end_pos = None
+        self.cam_pan_end_target = None
+
         self.reset_world(0)
 
     def _generate_stars(self, n):
@@ -260,16 +292,35 @@ class Game:
             stars.append((x,y,size,tw))
         return stars
 
-    def play_music(self):
+    def play_music(self, force=False):
         try:
-            if self.audio.get('music_loaded', False):
-                pygame.mixer.music.play(-1)
+            if not self.audio.get('music_loaded', False):
+                return
+            if force:
+                try:
+                    pygame.mixer.music.stop()
+                except Exception:
+                    pass
+                try:
+                    pygame.mixer.music.play(-1)
+                    self._music_started = True
+                except Exception:
+                    pass
+            else:
+                # only start if not already playing
+                try:
+                    if not pygame.mixer.music.get_busy():
+                        pygame.mixer.music.play(-1)
+                        self._music_started = True
+                except Exception:
+                    pass
         except Exception:
             pass
 
     def stop_music(self):
         try:
             pygame.mixer.music.stop()
+            self._music_started = False
         except Exception:
             pass
 
@@ -282,6 +333,20 @@ class Game:
             except Exception:
                 pass
         return None
+
+    def goto_menu(self):
+        # stop any music and return to main menu
+        try:
+            if self.cutscene_car_channel:
+                try:
+                    self.cutscene_car_channel.stop()
+                except Exception:
+                    pass
+            self.stop_music()
+        except Exception:
+            pass
+        self.state = 'menu'
+        self.selected_level = 0
 
     def level_seed(self, idx):
         return self.seed_base + idx * 7919
@@ -305,12 +370,12 @@ class Game:
 
         i = 0
         tries = 0
-        while i < cfg['num_buildings'] and tries < 20000:
+        while i < cfg['num_buildings'] and tries < 40000:
             tries += 1
             lane = rng.choice(cfg['lanes'])
             w = rng.uniform(cfg['min_w'], cfg['max_w'])
             midh = (cfg['min_h'] + cfg['max_h']) / 2.0
-            h_phys = max(4.0, rng.gauss(midh, (cfg['max_h'] - cfg['min_h']) * 0.12))
+            h_phys = max(4.0, rng.gauss(midh, (cfg['max_h'] - cfg['min_h']) * 0.14))
             h_phys = clamp(h_phys, cfg['min_h'], cfg['max_h'])
 
             if prev:
@@ -328,7 +393,7 @@ class Game:
                     h_phys = clamp(h_phys, cfg['min_h'], cfg['max_h'])
 
             gap = rng.uniform(cfg['gap_min'], cfg['gap_max'])
-            x = lane + rng.uniform(-1.6, 1.6)
+            x = lane + rng.uniform(-2.2, 2.2)  # allow more lateral variety
             b = Building(x, z, w, BUILDING_DEPTH, h_phys)
 
             feasible = False
@@ -337,7 +402,7 @@ class Game:
             else:
                 attempts_inner = 0
                 local_gap = gap
-                while attempts_inner < 8:
+                while attempts_inner < 12:
                     prev_cz = prev.z + prev.d * 0.5
                     cand_cz = b.z + b.d * 0.5
                     dx = b.x - prev.x
@@ -366,17 +431,57 @@ class Game:
             if not feasible:
                 continue
 
+            # try to resolve overlaps by nudging horizontally before giving up
+            clash = True
+            shift_attempt = 0
+            while clash and shift_attempt < 8:
+                clash = False
+                for bb in self.buildings:
+                    if buildings_overlap(b, bb, margin=0.08):
+                        clash = True
+                        # push b away along x depending on relative positions
+                        if b.x <= bb.x:
+                            b.x = bb.x - (bb.w*0.5 + b.w*0.5) - 0.15
+                        else:
+                            b.x = bb.x + (bb.w*0.5 + b.w*0.5) + 0.15
+                shift_attempt += 1
+
+            # final check: if still overlapping, skip candidate
+            bad = False
+            for bb in self.buildings:
+                if buildings_overlap(b, bb, margin=0.08):
+                    bad = True
+                    break
+            if bad:
+                continue
+
             self.buildings.append(b)
             prev = b
             z += BUILDING_DEPTH + gap
             i += 1
 
+        # fill remaining with safe-placement attempts
         while len(self.buildings) < cfg['num_buildings']:
-            x = rng.choice(cfg['lanes'])
-            w = rng.uniform(cfg['min_w'], cfg['max_w'])
-            h_phys = rng.uniform(cfg['min_h'], cfg['max_h'])
-            b = Building(x, z, w, BUILDING_DEPTH, h_phys)
-            self.buildings.append(b)
+            attempt = 0
+            placed = False
+            while attempt < 30 and not placed:
+                x = rng.choice(cfg['lanes']) + rng.uniform(-3.0, 3.0)
+                w = rng.uniform(cfg['min_w'], cfg['max_w'])
+                h_phys = rng.uniform(cfg['min_h'], cfg['max_h'])
+                b = Building(x, z + attempt * 0.5, w, BUILDING_DEPTH, h_phys)
+                clash = False
+                for bb in self.buildings:
+                    if buildings_overlap(b, bb, margin=0.08):
+                        clash = True
+                        break
+                if not clash:
+                    self.buildings.append(b)
+                    placed = True
+                else:
+                    attempt += 1
+            if not placed:
+                b = Building(rng.choice(cfg['lanes']), z, rng.uniform(cfg['min_w'], cfg['max_w']), BUILDING_DEPTH, rng.uniform(cfg['min_h'], cfg['max_h']))
+                self.buildings.append(b)
             z += BUILDING_DEPTH + cfg['gap_min']
 
         self.buildings.sort(key=lambda bb: bb.z)
@@ -385,7 +490,7 @@ class Game:
         horiz_reach_target = max_jump_horizontal(SPRINT_SPEED, JUMP_V, GRAVITY) * 0.98
         max_visual_up = max_up * 0.98
         max_visual_down = max_visual_up * 3.0
-        for _pass in range(4):
+        for _pass in range(6):
             for idx in range(1, len(self.buildings)):
                 prev = self.buildings[idx-1]
                 b = self.buildings[idx]
@@ -469,6 +574,10 @@ class Game:
         self.cutscene_initial_dist = None
         self.cutscene_car_channel = None
 
+        # reset camera pan
+        self.cam_pan_active = False
+        self.cam_pan_t = 0.0
+
         pygame.mouse.get_rel()
         self.update_camera_immediate()
 
@@ -547,29 +656,32 @@ class Game:
         self.cutscene_t = 0.0
         self.cutscene_phase = 0
 
+        # hide level complete overlay while cutscene plays
+        self.level_completed = False
+
         final_b = self.buildings[-1]
-        # city target far ahead of final building
-        city_target = Vec3(final_b.x, final_b.h_visual + 8.0, final_b.z + final_b.d * 6.0)
+        # city target far ahead of final building (placed at skyline depth)
+        city_target = Vec3(final_b.x, final_b.h_visual + 8.0, final_b.z + final_b.d * 8.0)
         self.cutscene_city_target = city_target
 
         # compute direction from player to city (if degenerate, default forward)
         player_pos = Vec3(self.player_x, self.player_y, self.player_z)
         dir_to_city = normalize(Vec3(city_target.x - player_pos.x, city_target.y - player_pos.y, city_target.z - player_pos.z))
 
-        # place camera **behind the player** (parkour area) looking toward the city ahead;
-        # that way buildings you just jumped on (behind the player) will be out of view.
-        cam_offset_back = 6.0
+        # position the camera slightly to the right and above the car and keep it fixed (does not follow the car)
+        world_up = Vec3(0,1,0)
+        right_vec = normalize(cross(dir_to_city, world_up))
+        cam_offset_right = 3.0
         cam_height = 4.0
-        cam_forward_far = 60.0
-        self.cam_pos = Vec3(player_pos.x - dir_to_city.x * cam_offset_back,
+        cam_back = 6.0
+        # camera placed relative to the player/car initial position and left fixed
+        self.cam_pos = Vec3(player_pos.x + right_vec.x * cam_offset_right,
                              player_pos.y + cam_height,
-                             player_pos.z - dir_to_city.z * cam_offset_back)
-        self.cam_target = Vec3(player_pos.x + dir_to_city.x * cam_forward_far,
-                               player_pos.y + 2.0,
-                               player_pos.z + dir_to_city.z * cam_forward_far)
+                             player_pos.z + right_vec.z * cam_offset_right - cam_back)
+        # look toward the city target so the car flies into the background
+        self.cam_target = Vec3(city_target.x, city_target.y, city_target.z)
         self.forward, self.right, self.up = build_camera_basis(self.cam_pos, self.cam_target)
-        # store yaw/pitch so later normal gameplay resets work correctly
-        # compute yaw from forward vector (rough estimate)
+        # store yaw/pitch for potential reset later
         yaw = math.atan2(self.cam_pos.x - self.cam_target.x, self.cam_pos.z - self.cam_target.z)
         self.cutscene_cam_orig = (self.cam_yaw, self.cam_pitch)
         self.cam_yaw = yaw
@@ -591,6 +703,18 @@ class Game:
         self.player_y = self.vehicle_pos.y - 1.4
         self.player_z = self.vehicle_pos.z
 
+        # stop background music and start the cutscene soundtrack (keeps playing until returning to menu)
+        try:
+            self.stop_music()
+        except Exception:
+            pass
+        if self.audio.get('cutscene_music_loaded', False):
+            try:
+                pygame.mixer.music.load(self.audio['cutscene_music_path'])
+                pygame.mixer.music.play(-1)
+            except Exception:
+                pass
+
         # play car loop if available (looping)
         if self.audio.get('car_loop'):
             try:
@@ -598,7 +722,6 @@ class Game:
             except Exception:
                 self.cutscene_car_channel = None
         self.play_sfx('pickup')
-        self.play_sfx('whoosh')
         self.fade_alpha = 0.0
 
     def _save_best_time_for_level(self, lvl, comp_time):
@@ -628,7 +751,7 @@ class Game:
         self.update_camera_immediate()
 
     def update(self, dt, inputs):
-        # handle cutscene movement (camera is fixed at parkour area; vehicle moves away from camera -> gets smaller)
+        # handle cutscene movement (camera is fixed; vehicle moves away from camera -> gets smaller)
         if self.cutscene_active:
             self.cutscene_t += dt
             lead_time = 0.8
@@ -642,10 +765,10 @@ class Game:
                 self.vehicle_pos.x += self.vehicle_dir.x * speed
                 self.vehicle_pos.y += self.vehicle_dir.y * speed
                 self.vehicle_pos.z += self.vehicle_dir.z * speed
+                # player rides in vehicle visually
                 self.player_x = self.vehicle_pos.x
                 self.player_y = self.vehicle_pos.y - 1.4
                 self.player_z = self.vehicle_pos.z
-                self._update_cutscene_bg_scale()
                 return
 
             t_since_lead = self.cutscene_t - lead_time
@@ -658,7 +781,6 @@ class Game:
                 self.player_x = self.vehicle_pos.x
                 self.player_y = self.vehicle_pos.y - 1.4
                 self.player_z = self.vehicle_pos.z
-                self._update_cutscene_bg_scale()
                 return
 
             t2 = t_since_lead - approach_time
@@ -671,13 +793,11 @@ class Game:
                 self.player_x = self.vehicle_pos.x
                 self.player_y = self.vehicle_pos.y - 1.4
                 self.player_z = self.vehicle_pos.z
-                self._update_cutscene_bg_scale()
                 return
 
             # fade to black phase
             t3 = t2 - accel_time
             self.fade_alpha = clamp(t3 / fade_time, 0.0, 1.0)
-            self._update_cutscene_bg_scale()
             if t3 >= fade_time:
                 self.cutscene_active = False
                 try:
@@ -693,6 +813,25 @@ class Game:
                 # go to YOU WIN screen
                 self.state = 'gameover'
                 self.selected_level = 0
+            return
+
+        # camera pan handling after level complete
+        if self.cam_pan_active:
+            self.cam_pan_t = min(self.cam_pan_dur, self.cam_pan_t + dt)
+            t = self.cam_pan_t / max(1e-6, self.cam_pan_dur)
+            # smooth interpolation (ease in/out)
+            t_s = t * t * (3 - 2*t)
+            sp = Vec3(lerp(self.cam_pan_start_pos.x, self.cam_pan_end_pos.x, t_s),
+                      lerp(self.cam_pan_start_pos.y, self.cam_pan_end_pos.y, t_s),
+                      lerp(self.cam_pan_start_pos.z, self.cam_pan_end_pos.z, t_s))
+            st = Vec3(lerp(self.cam_pan_start_target.x, self.cam_pan_end_target.x, t_s),
+                      lerp(self.cam_pan_start_target.y, self.cam_pan_end_target.y, t_s),
+                      lerp(self.cam_pan_start_target.z, self.cam_pan_end_target.z, t_s))
+            self.cam_pos = sp
+            self.cam_target = st
+            self.forward, self.right, self.up = build_camera_basis(self.cam_pos, self.cam_target)
+            if self.cam_pan_t >= self.cam_pan_dur:
+                self.cam_pan_active = False
             return
 
         if self.state != 'play': return
@@ -830,6 +969,9 @@ class Game:
             if self.fell_off:
                 landed = None
             else:
+                # if we hit the roof with large downward speed, play death sfx (heavy landing)
+                if hasattr(self, 'player_vy') and self.player_vy < -12.0:
+                    self.play_sfx('death')
                 self.player_y = landed.h_visual
                 self.player_vy = 0.0
                 self.player_on_ground = True
@@ -837,6 +979,8 @@ class Game:
                 self.left_by_jump = False
         else:
             if self.player_y <= -8.0:
+                # death sound on falling below kill-plane
+                self.play_sfx('death')
                 self.respawn()
                 return
             self.player_on_ground = False
@@ -873,28 +1017,22 @@ class Game:
             self.completion_time = time.time() - self.time_start
             self._save_best_time_for_level(self.level_index, self.completion_time)
             self.play_sfx('level_end')
-            self.play_sfx('goal')
+            # start smooth camera pan to a position slightly above and to the right of the player
+            self.cam_pan_t = 0.0
+            self.cam_pan_dur = 1.0
+            self.cam_pan_start_pos = Vec3(self.cam_pos.x, self.cam_pos.y, self.cam_pos.z)
+            self.cam_pan_start_target = Vec3(self.cam_target.x, self.cam_target.y, self.cam_target.z)
+            # end pos: a bit above and to the right, looking ahead
+            end_pos = Vec3(self.player_x + 3.6, self.player_y + 5.2, self.player_z - 6.0)
+            end_target = Vec3(self.player_x + 10.0, self.player_y + 2.0, self.player_z + 18.0)
+            self.cam_pan_end_pos = end_pos
+            self.cam_pan_end_target = end_target
             return
-
-    def _update_cutscene_bg_scale(self):
-        if self.cutscene_city_target is None or self.vehicle_pos is None:
-            return
-        if self.cutscene_initial_dist is None or self.cutscene_initial_dist <= 0:
-            self.cutscene_bg_scale = 1.0
-            return
-        cur_dist = length(Vec3(self.cutscene_city_target.x - self.vehicle_pos.x,
-                               self.cutscene_city_target.y - self.vehicle_pos.y,
-                               self.cutscene_city_target.z - self.vehicle_pos.z))
-        frac = clamp(1.0 - (cur_dist / max(1e-6, self.cutscene_initial_dist)), 0.0, 1.0)
-        self.cutscene_bg_scale = 1.0 + (1.2 * (frac * frac * (3 - 2*frac)))
-        self.cutscene_bg_scale = clamp(self.cutscene_bg_scale, 1.0, 2.5)
 
     def draw_skyline_background(self):
         s = self.screen
         layers = 3
         scale = 1.0
-        if self.cutscene_active:
-            scale = self.cutscene_bg_scale
         for layer in range(layers):
             count = int((28 - layer*6) * (0.9 + (scale-1.0)*0.06))
             y_base = WIN_H * (0.18 + layer * 0.06) - int((scale-1.0)*18 * layer)
@@ -909,7 +1047,7 @@ class Game:
                 c = (clamp(color_base+random.randint(-6,6),0,255), clamp(color_base+random.randint(-6,6),0,255), clamp(color_base+30+layer*6,0,255))
                 pygame.draw.rect(s, c, rect)
 
-        # billboard scaled by cutscene_bg_scale
+        # billboard (fixed scale)
         bx = int(WIN_W*0.625); by = int(WIN_H*0.13)
         bw = int(220 * scale); bh = int(56 * scale)
         outline = pygame.Surface((bw+20, bh+20), pygame.SRCALPHA)
@@ -992,99 +1130,357 @@ class Game:
                 face_list.append({'cz': avg_cz, 'poly': poly2, 'col': col, 'b_idx': idx, 'proj': proj,
                                   'face_idx': fi, 'poly_world': poly_world, 'building': b})
 
-        # sort far->near
-        face_list.sort(key=lambda it: it['cz'], reverse=True)
+        # Add player and vehicle as drawable entries so they receive depth sorting and can be partially occluded
+        ppos = Vec3(self.player_x, self.player_y + PLAYER_HEIGHT*0.25, self.player_z)
+        psx, psy, psc, pcz = project_point(ppos, self.cam_pos, self.forward, self.right, self.up, fov)
+        player_proj = None
+        if isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0:
+            player_proj = (psx, psy, psc, pcz)
+
+        vehicle_proj = None
+        if self.cutscene_active and self.vehicle_pos is not None:
+            vpx, vpy, vps, vcz = project_point(self.vehicle_pos, self.cam_pos, self.forward, self.right, self.up, fov)
+            if isfinite(vpx) and isfinite(vpy) and isfinite(vps) and vcz > 0:
+                vehicle_proj = (vpx, vpy, vps, vcz)
+
+        # Group faces by building
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for f in face_list:
+            groups[f['b_idx']].append(f)
+
+        entries = []
+        # building entries
+        for bidx, faces in groups.items():
+            b = faces[0].get('building')
+            center_world = Vec3(b.x, b.h_visual * 0.5, b.z + b.d * 0.5)
+            pc = project_point(center_world, self.cam_pos, self.forward, self.right, self.up, fov)
+            center_cz = pc[3] if (pc and isfinite(pc[3])) else (sum(f['cz'] for f in faces) / len(faces))
+            entries.append((center_cz, 'building', bidx, faces))
+        # player entry
+        if player_proj is not None:
+            entries.append((player_proj[3], 'player', None, player_proj))
+        # vehicle entry (if cutscene active)
+        if vehicle_proj is not None:
+            entries.append((vehicle_proj[3], 'vehicle', None, vehicle_proj))
+
+        # sort far -> near
+        entries.sort(key=lambda e: e[0], reverse=True)
 
         t = time.time() - getattr(self, 'time_start', 0.0)
 
-        # draw faces and embedded horizontal rectangular window rows (identical width)
-        for f in face_list:
-            poly = f['poly']
-            if not poly or not safe_poly(poly):
-                continue
+        # helper: compute face normal and whether it faces camera
+        def face_normal(poly_world):
             try:
-                pygame.draw.polygon(s, f['col'], poly)
-                pygame.draw.polygon(s, (10,10,12), poly, 1)
-                fi = f['face_idx']
-                # only draw windows on left/right faces (sides) so they are horizontal rows
-                if fi in (4,5):
-                    pw = f['poly_world']
-                    sorted_by_y = sorted(pw, key=lambda v: v.y, reverse=True)
-                    top_pts = sorted_by_y[:2]
-                    bot_pts = sorted_by_y[2:]
-                    pair = sorted(zip(top_pts, bot_pts), key=lambda pr: dot(pr[0], self.right))
-                    if len(pair) == 2:
-                        (tL, bL), (tR, bR) = (pair[0][0], pair[0][1]), (pair[1][0], pair[1][1])
-                        # compute a consistent left-right parameterization v0..v1 where windows use identical width
-                        # We'll create N rows (based on face height) with identical horizontal extent (same v span)
-                        mid_top = Vec3((tL.x + tR.x)/2.0, (tL.y + tR.y)/2.0, (tL.z + tR.z)/2.0)
-                        mid_bot = Vec3((bL.x + bR.x)/2.0, (bL.y + bR.y)/2.0, (bL.z + bR.z)/2.0)
-                        pt_top = project_point(mid_top, self.cam_pos, self.forward, self.right, self.up, fov)
-                        pt_bot = project_point(mid_bot, self.cam_pos, self.forward, self.right, self.up, fov)
-                        screen_h = abs(pt_bot[1] - pt_top[1]) if isfinite(pt_top[1]) and isfinite(pt_bot[1]) else 80
-                        # decide rows: 1-3 rows depending on visual height
-                        num_rows = 1 if screen_h < 90 else 2 if screen_h < 200 else 3
-                        # fixed horizontal window fraction v_start..v_end to make identical width across rows
-                        v_pad = 0.12
-                        v0 = v_pad
-                        v1 = 1.0 - v_pad
-                        thickness = 0.12
-                        idx_counter = 0
-                        for r in range(num_rows):
-                            # vertical u region evenly spaced
-                            u_center = (r + 1) / (num_rows + 1)
-                            u0 = clamp(u_center - thickness*0.5, 0.0, 1.0)
-                            u1 = clamp(u_center + thickness*0.5, 0.0, 1.0)
-                            bottom_v0 = Vec3(lerp(bL.x, bR.x, v0), lerp(bL.y, bR.y, v0), lerp(bL.z, bR.z, v0))
-                            bottom_v1 = Vec3(lerp(bL.x, bR.x, v1), lerp(bL.y, bR.y, v1), lerp(bL.z, bR.z, v1))
-                            top_v0 = Vec3(lerp(tL.x, tR.x, v0), lerp(tL.y, tR.y, v0), lerp(tL.z, tR.z, v0))
-                            top_v1 = Vec3(lerp(tL.x, tR.x, v1), lerp(tL.y, tR.y, v1), lerp(tL.z, tR.z, v1))
-                            p00 = Vec3(lerp(bottom_v0.x, top_v0.x, u0), lerp(bottom_v0.y, top_v0.y, u0), lerp(bottom_v0.z, top_v0.z, u0))
-                            p10 = Vec3(lerp(bottom_v1.x, top_v1.x, u0), lerp(bottom_v1.y, top_v1.y, u0), lerp(bottom_v1.z, top_v1.z, u0))
-                            p11 = Vec3(lerp(bottom_v1.x, top_v1.x, u1), lerp(bottom_v1.y, top_v1.y, u1), lerp(bottom_v1.z, top_v1.z, u1))
-                            p01 = Vec3(lerp(bottom_v0.x, top_v0.x, u1), lerp(bottom_v0.y, top_v0.y, u1), lerp(bottom_v0.z, top_v0.z, u1))
-                            quad_world = [p00, p10, p11, p01]
-                            quad_proj = [project_point(q, self.cam_pos, self.forward, self.right, self.up, fov) for q in quad_world]
-                            quad = [(q[0], q[1]) for q in quad_proj]
-                            if safe_poly(quad):
-                                brightness = int(clamp(140 + 40 * math.sin(t * 2.0 + idx_counter * 0.6), 110, 220))
-                                cx = sum(pt[0] for pt in quad)/4.0
-                                cy = sum(pt[1] for pt in quad)/4.0
-                                shrink_inner = 0.94
-                                inner_shrunk = [((pt[0]-cx)*shrink_inner + cx, (pt[1]-cy)*shrink_inner + cy) for pt in quad]
-                                # base glass panel
-                                pygame.draw.polygon(s, (12,14,16), inner_shrunk)
-                                # emissive-like glow (subtle, not heavy)
-                                pygame.draw.polygon(s, (brightness-24, brightness+8, min(255, brightness+28)), inner_shrunk)
-                                pygame.draw.polygon(s, (8,8,10), inner_shrunk, 1)
-                            idx_counter += 1
+                a = poly_world[0]; b = poly_world[1]; c = poly_world[2]
+                e1 = Vec3(b.x - a.x, b.y - a.y, b.z - a.z)
+                e2 = Vec3(c.x - a.x, c.y - a.y, c.z - a.z)
+                n = cross(e1, e2)
+                return n
             except Exception:
+                return Vec3(0,1,0)
+
+        # draw grouped entries
+        for ent in entries:
+            typ = ent[1]
+            if typ == 'player':
+                try:
+                    psx, psy, psc, pcz = ent[3]
+                    if not (isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0):
+                        continue
+                    scale = clamp((CAM_DIST_DEFAULT / max(1e-3, self.cam_dist)), 0.35, 3.6)
+                    pw = max(12, int(PLAYER_BASE_W * scale))
+                    ph = max(18, int(PLAYER_BASE_H * scale))
+                    shadow_w = pw * 1.6; shadow_h = max(4, int(pw * 0.32))
+                    shadow = pygame.Surface((int(shadow_w), shadow_h), pygame.SRCALPHA)
+                    pygame.draw.ellipse(shadow, (0,0,0,160), shadow.get_rect())
+                    s.blit(shadow, (int(psx - shadow.get_width()//2), int(psy - ph*0.18 + shadow.get_height()//2)))
+                    body_rect = pygame.Rect(int(psx - pw//2), int(psy - ph), pw, ph)
+                    pygame.draw.rect(s, (28,28,30), body_rect, border_radius=max(6, pw//6))
+                    chest = pygame.Rect(int(psx - pw*0.28), int(psy - int(ph * 0.78)), int(pw*0.56), int(ph*0.44))
+                    pygame.draw.rect(s, (46,58,68), chest, border_radius=4)
+                    sp_w = int(pw*0.28); sp_h = int(ph*0.18)
+                    pygame.draw.rect(s, (36,36,40), (int(psx - pw//2 - 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
+                    pygame.draw.rect(s, (36,36,40), (int(psx + pw//2 - sp_w + 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
+                    head_w = int(pw*0.64); head_h = int(ph*0.28)
+                    pygame.draw.ellipse(s, (38,38,40), (int(psx - head_w//2), int(psy - ph - head_h//2), head_w, head_h))
+                    visor = pygame.Surface((int(head_w*0.6), int(head_h*0.36)), pygame.SRCALPHA)
+                    pygame.draw.ellipse(visor, (80,120,140,140), visor.get_rect())
+                    s.blit(visor, (int(psx - (head_w*0.6)/2), int(psy - ph - head_h*0.5)))
+                except Exception:
+                    pass
                 continue
 
-        # draw player silhouette (player may ride in vehicle during cutscene; camera is fixed)
-        ppos = Vec3(self.player_x, self.player_y + PLAYER_HEIGHT*0.25, self.player_z)
-        psx, psy, psc, pcz = project_point(ppos, self.cam_pos, self.forward, self.right, self.up, fov)
+            if typ == 'vehicle':
+                try:
+                    vpx, vpy, vps, vcz = ent[3]
+                    if not (isfinite(vpx) and isfinite(vpy) and isfinite(vcz) and vcz > 0):
+                        continue
+                    # screen scale based on projection to create realistic shrink
+                    screen_scale = clamp(1.0 / max(1e-4, vps*0.06), 0.08, 3.2)
+                    wv = int(240 * screen_scale)
+                    hv = int(64 * screen_scale)
+                    cx = int(vpx); cy = int(vpy)
 
-        if isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0:
-            scale = clamp((CAM_DIST_DEFAULT / max(1e-3, self.cam_dist)), 0.35, 3.6)
-            pw = max(12, int(PLAYER_BASE_W * scale))
-            ph = max(18, int(PLAYER_BASE_H * scale))
-            shadow_w = pw * 1.6; shadow_h = max(4, int(pw * 0.32))
-            shadow = pygame.Surface((int(shadow_w), shadow_h), pygame.SRCALPHA)
-            pygame.draw.ellipse(shadow, (0,0,0,160), shadow.get_rect())
-            s.blit(shadow, (int(psx - shadow.get_width()//2), int(psy - ph*0.18 + shadow.get_height()//2)))
-            body_rect = pygame.Rect(int(psx - pw//2), int(psy - ph), pw, ph)
-            pygame.draw.rect(s, (28,28,30), body_rect, border_radius=max(6, pw//6))
-            chest = pygame.Rect(int(psx - pw*0.28), int(psy - int(ph * 0.78)), int(pw*0.56), int(ph*0.44))
-            pygame.draw.rect(s, (46,58,68), chest, border_radius=4)
-            sp_w = int(pw*0.28); sp_h = int(ph*0.18)
-            pygame.draw.rect(s, (36,36,40), (int(psx - pw//2 - 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
-            pygame.draw.rect(s, (36,36,40), (int(psx + pw//2 - sp_w + 2), int(psy - ph + 4), sp_w, sp_h), border_radius=4)
-            head_w = int(pw*0.64); head_h = int(ph*0.28)
-            pygame.draw.ellipse(s, (38,38,40), (int(psx - head_w//2), int(psy - ph - head_h//2), head_w, head_h))
-            visor = pygame.Surface((int(head_w*0.6), int(head_h*0.36)), pygame.SRCALPHA)
-            pygame.draw.ellipse(visor, (80,120,140,140), visor.get_rect())
-            s.blit(visor, (int(psx - (head_w*0.6)/2), int(psy - ph - head_h*0.5)))
+                    # sleek futuristic car silhouette composed of layered polygons
+                    body = [(cx - wv//2, cy), (cx - int(wv*0.12), cy - int(hv*0.45)), (cx + int(wv*0.28), cy - int(hv*0.5)), (cx + wv//2, cy),
+                            (cx + int(wv*0.28), cy + int(hv*0.28)), (cx - int(wv*0.18), cy + int(hv*0.28))]
+                    pygame.draw.polygon(s, (18,20,26), body)
+                    # glossy top
+                    top = [(cx - int(wv*0.08), cy - int(hv*0.28)), (cx + int(wv*0.22), cy - int(hv*0.34)), (cx + int(wv*0.12), cy - int(hv*0.08)), (cx - int(wv*0.02), cy - int(hv*0.02))]
+                    pygame.draw.polygon(s, (36,48,60), top)
+                    # cockpit window
+                    cock = pygame.Rect(cx - int(wv*0.06), cy - int(hv*0.28), int(wv*0.36), int(hv*0.36))
+                    pygame.draw.ellipse(s, (40,60,72), cock)
+                    pygame.draw.ellipse(s, (90,140,180), cock, 2)
+                    # wings / fins
+                    wing_l = [(cx - wv//2 + 6, cy), (cx - wv//2 - int(wv*0.18), cy - int(hv*0.32)), (cx - wv//2 - int(wv*0.18), cy + int(hv*0.32))]
+                    wing_r = [(cx + wv//2 - 6, cy), (cx + wv//2 + int(wv*0.18), cy - int(hv*0.32)), (cx + wv//2 + int(wv*0.18), cy + int(hv*0.32))]
+                    pygame.draw.polygon(s, (16,18,22), wing_l)
+                    pygame.draw.polygon(s, (16,18,22), wing_r)
+                    # subtle engine glow (back)
+                    thr_w = int(wv*0.22); thr_h = int(hv*0.28)
+                    thr_surf = pygame.Surface((thr_w, thr_h), pygame.SRCALPHA)
+                    pygame.draw.ellipse(thr_surf, (70,140,220,80), (0,0,thr_w,thr_h))
+                    s.blit(thr_surf, (cx + int(wv*0.22), cy - thr_h//2))
+                except Exception:
+                    pass
+                continue
+
+            # building entry
+            faces = ent[3]
+            # draw building's faces far -> near (so nearer faces draw over farther faces of same building)
+            faces_sorted = sorted(faces, key=lambda x: x['cz'], reverse=True)
+            for f in faces_sorted:
+                poly = f.get('poly')
+                if not poly or not safe_poly(poly):
+                    continue
+                try:
+                    pygame.draw.polygon(s, f['col'], poly)
+                    pygame.draw.polygon(s, (10,10,12), poly, 1)
+                    fi = f['face_idx']
+
+                    # only draw windows on side faces and only if the face outward normal points toward the camera
+                    if fi in (4,5):
+                        pw = f['poly_world']
+                        # compute face normal and view direction
+                        n = face_normal(pw)
+                        # view direction from face toward camera
+                        face_center = Vec3(sum(v.x for v in pw)/4.0, sum(v.y for v in pw)/4.0, sum(v.z for v in pw)/4.0)
+                        view_dir = Vec3(self.cam_pos.x - face_center.x, self.cam_pos.y - face_center.y, self.cam_pos.z - face_center.z)
+                        # if normal dot view_dir <= 0, the face is facing away or inverted; skip window drawing
+                        if dot(n, view_dir) <= 0:
+                            continue
+
+                        sorted_by_y = sorted(pw, key=lambda v: v.y, reverse=True)
+                        top_pts = sorted_by_y[:2]
+                        bot_pts = sorted_by_y[2:]
+                        pair = sorted(zip(top_pts, bot_pts), key=lambda pr: dot(pr[0], self.right))
+                        if len(pair) == 2:
+                            (tL, bL), (tR, bR) = (pair[0][0], pair[0][1]), (pair[1][0], pair[1][1])
+
+                            # world-space midpoints for top and bottom
+                            mid_top = Vec3((tL.x + tR.x)/2.0, (tL.y + tR.y)/2.0, (tL.z + tR.z)/2.0)
+                            mid_bot = Vec3((bL.x + bR.x)/2.0, (bL.y + bR.y)/2.0, (bL.z + bR.z)/2.0)
+
+                            # inset fraction, thickness (world-space fractions)
+                            v_pad = 0.03
+                            v0 = v_pad
+                            v1 = 1.0 - v_pad
+                            thickness = 0.04
+
+                            # local Vec3 helpers
+                            def v_sub(a, b): return Vec3(a.x - b.x, a.y - b.y, a.z - b.z)
+                            def v_add(a, b): return Vec3(a.x + b.x, a.y + b.y, a.z + b.z)
+                            def v_mul(a, s): return Vec3(a.x * s, a.y * s, a.z * s)
+                            def v_len(a): return math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z)
+                            def v_norm(a):
+                                L = v_len(a)
+                                if L <= 1e-9: return Vec3(0.0,0.0,0.0)
+                                return Vec3(a.x/L, a.y/L, a.z/L)
+                            def v_cross(a,b): return Vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x)
+                            def dot3(a,b): return a.x*b.x + a.y*b.y + a.z*b.z
+
+                            # inset edge points (world)
+                            top_v0 = Vec3(lerp(tL.x, tR.x, v0), lerp(tL.y, tR.y, v0), lerp(tL.z, tR.z, v0))
+                            bot_v0 = Vec3(lerp(bL.x, bR.x, v0), lerp(bL.y, bR.y, v0), lerp(bL.z, bR.z, v0))
+                            top_v1 = Vec3(lerp(tL.x, tR.x, v1), lerp(tL.y, tR.y, v1), lerp(tL.z, tR.z, v1))
+                            bot_v1 = Vec3(lerp(bL.x, bR.x, v1), lerp(bL.y, bR.y, v1), lerp(bL.z, bR.z, v1))
+
+                            # face axes in world-space (guarantees parallel edges)
+                            u_world_raw = v_sub(top_v1, top_v0)
+                            v_left_raw  = v_sub(bot_v0, top_v0)
+                            v_right_raw = v_sub(bot_v1, top_v1)
+
+                            top_len_world = v_len(u_world_raw)
+                            if top_len_world <= 1e-6:
+                                continue
+
+                            u_world = v_norm(u_world_raw)
+                            nv_left = v_norm(v_left_raw)
+                            nv_right = v_norm(v_right_raw)
+                            avg_v = v_add(nv_left, nv_right)
+                            if v_len(avg_v) <= 1e-6:
+                                cu = u_world
+                                up = self.up
+                                avg_v = v_cross(cu, up)
+                                if v_len(avg_v) <= 1e-6:
+                                    avg_v = Vec3(0.0, 1.0, 0.0)
+                            v_world = v_norm(avg_v)
+
+                            full_top_len_world = top_len_world
+                            width_world = max(1e-3, full_top_len_world * 0.92)
+                            half_w_world = width_world * 0.5
+                            avg_vert_len_world = 0.5 * (v_len(v_left_raw) + v_len(v_right_raw))
+                            if avg_vert_len_world <= 1e-6:
+                                continue
+                            height_world = max(1e-3, avg_vert_len_world * thickness)
+                            half_h_world = min(height_world * 0.5, (avg_vert_len_world * 0.5) * 0.98)
+
+                            proj_mid_top = project_point(mid_top, self.cam_pos, self.forward, self.right, self.up, fov)
+                            proj_mid_bot = project_point(mid_bot, self.cam_pos, self.forward, self.right, self.up, fov)
+                            def proj_ok(p):
+                                try:
+                                    return isfinite(p[0]) and isfinite(p[1]) and isfinite(p[3]) and (p[3] > 0.05)
+                                except Exception:
+                                    return False
+                            if not (proj_ok(proj_mid_top) and proj_ok(proj_mid_bot)):
+                                continue
+
+                            screen_h = abs(proj_mid_bot[1] - proj_mid_top[1])
+                            screen_h = max(8.0, screen_h)
+                            num_rows = clamp(int(screen_h / 25), 4, 80)
+
+                            now = time.time()
+                            prev_cam = getattr(self, '_prev_cam_pos', None)
+                            prev_time = getattr(self, '_prev_cam_time', None)
+                            cam_motion = 0.0
+                            cam_speed = 0.0
+                            if prev_cam is not None and prev_time is not None:
+                                dx = (self.cam_pos.x - prev_cam.x); dy = (self.cam_pos.y - prev_cam.y); dz = (self.cam_pos.z - prev_cam.z)
+                                cam_motion = math.sqrt(dx*dx + dy*dy + dz*dz)
+                                dt = max(1e-6, now - prev_time)
+                                cam_speed = cam_motion / dt
+                            self._prev_cam_pos = Vec3(self.cam_pos.x, self.cam_pos.y, self.cam_pos.z)
+                            self._prev_cam_time = now
+
+                            sine_speed = 1.6
+                            sine_amp = 50.0
+                            sine_phase = 0.28
+                            base_brightness = 130
+
+                            face_col = f.get('col', (20,24,40))
+                            window_base = (min(255, face_col[0] + 8), min(255, face_col[1] + 16), min(255, face_col[2] + 56))
+
+                            MIN_HALF_H = 10.0
+                            MIN_FULL_W = 28.0
+
+                            idx_counter = 0
+                            margin_world = half_h_world / max(avg_vert_len_world, 1e-6)
+                            margin_world = clamp(margin_world, 0.0, 0.45)
+
+                            for r in range(num_rows):
+                                frac = (r + 0.5) / num_rows
+                                u_center = margin_world + frac * (1.0 - 2.0 * margin_world)
+
+                                cx_w = lerp(mid_top.x, mid_bot.x, u_center)
+                                cy_w = lerp(mid_top.y, mid_bot.y, u_center)
+                                cz_w = lerp(mid_top.z, mid_bot.z, u_center)
+                                center_world = Vec3(cx_w, cy_w, cz_w)
+
+                                tl_w = v_sub(v_sub(center_world, v_mul(u_world, half_w_world)), v_mul(v_world, half_h_world))
+                                tr_w = v_add(v_sub(center_world, v_mul(v_world, half_h_world)), v_mul(u_world, half_w_world))
+                                br_w = v_add(v_add(center_world, v_mul(u_world, half_w_world)), v_mul(v_world, half_h_world))
+                                bl_w = v_sub(v_add(center_world, v_mul(v_world, half_h_world)), v_mul(u_world, half_w_world))
+
+                                p_tl = project_point(tl_w, self.cam_pos, self.forward, self.right, self.up, fov)
+                                p_tr = project_point(tr_w, self.cam_pos, self.forward, self.right, self.up, fov)
+                                p_br = project_point(br_w, self.cam_pos, self.forward, self.right, self.up, fov)
+                                p_bl = project_point(bl_w, self.cam_pos, self.forward, self.right, self.up, fov)
+                                if not (proj_ok(p_tl) and proj_ok(p_tr) and proj_ok(p_br) and proj_ok(p_bl)):
+                                    idx_counter += 1
+                                    continue
+
+                                rect = [(p_tl[0], p_tl[1]), (p_tr[0], p_tr[1]), (p_br[0], p_br[1]), (p_bl[0], p_bl[1])]
+                                if not safe_poly(rect):
+                                    idx_counter += 1
+                                    continue
+
+                                proj_half_h = 0.5 * math.hypot(rect[0][0]-rect[3][0], rect[0][1]-rect[3][1])
+                                proj_full_w = math.hypot(rect[1][0]-rect[0][0], rect[1][1]-rect[0][1])
+
+                                cx = sum(pt[0] for pt in rect) / 4.0
+                                cy = sum(pt[1] for pt in rect) / 4.0
+
+                                edge_dx = rect[1][0] - rect[0][0]; edge_dy = rect[1][1] - rect[0][1]
+                                edge_len = math.hypot(edge_dx, edge_dy)
+                                if edge_len > 1e-6:
+                                    edge_dir = (edge_dx/edge_len, edge_dy/edge_len)
+                                else:
+                                    edge_dir = (1.0, 0.0)
+                                v_dx = rect[3][0] - rect[0][0]; v_dy = rect[3][1] - rect[0][1]
+                                v_len_screen = math.hypot(v_dx, v_dy)
+                                if v_len_screen > 1e-6:
+                                    v_dir = (v_dx / v_len_screen, v_dy / v_len_screen)
+                                else:
+                                    v_dir = (0.0, 1.0)
+
+                                rebuild = False
+                                half_w_screen = proj_full_w * 0.5
+                                half_h_screen = proj_half_h
+                                if proj_half_h < MIN_HALF_H:
+                                    half_h_screen = MIN_HALF_H
+                                    rebuild = True
+                                if proj_full_w < MIN_FULL_W:
+                                    half_w_screen = MIN_FULL_W * 0.5
+                                    rebuild = True
+
+                                if rebuild:
+                                    max_half_w = max(half_w_screen, 0.5 * proj_full_w)
+                                    half_w_screen = min(half_w_screen, max_half_w)
+                                    tl = (cx - edge_dir[0]*half_w_screen - v_dir[0]*half_h_screen,
+                                          cy - edge_dir[1]*half_w_screen - v_dir[1]*half_h_screen)
+                                    tr = (cx + edge_dir[0]*half_w_screen - v_dir[0]*half_h_screen,
+                                          cy + edge_dir[1]*half_w_screen - v_dir[1]*half_h_screen)
+                                    br = (cx + edge_dir[0]*half_w_screen + v_dir[0]*half_h_screen,
+                                          cy + edge_dir[1]*half_w_screen + v_dir[1]*half_h_screen)
+                                    bl = (cx - edge_dir[0]*half_w_screen + v_dir[0]*half_h_screen,
+                                          cy - edge_dir[1]*half_w_screen + v_dir[1]*half_h_screen)
+                                    rect = [tl, tr, br, bl]
+
+                                sine = math.sin(t * sine_speed + idx_counter * sine_phase)
+                                movement_boost = clamp(min(cam_speed / 4.0, 1.0), 0.0, 0.9)
+                                intensity = clamp(0.25 + 0.75 * movement_boost + 0.35 * (sine * 0.5 + 0.5), 0.0, 1.0)
+                                brightness = int(clamp(base_brightness + sine_amp * (sine * 0.6 + 0.4) + intensity * 40.0, 120, 255))
+
+                                wr = int(clamp(window_base[0] * 0.35 + brightness * 0.65, 0, 255))
+                                wg = int(clamp(window_base[1] * 0.30 + brightness * 0.70, 0, 255))
+                                wb = int(clamp(window_base[2] * 0.25 + brightness * 0.75, 0, 255))
+
+                                v_dir_x = (rect[3][0] - rect[0][0])
+                                v_dir_y = (rect[3][1] - rect[0][1])
+                                v_dir_len = math.hypot(v_dir_x, v_dir_y)
+                                if v_dir_len > 1e-6:
+                                    v_dir_x /= v_dir_len; v_dir_y /= v_dir_len
+                                else:
+                                    v_dir_x, v_dir_y = 0.0, 1.0
+
+                                shadow_off = max(1.0, half_h_screen * 0.25)
+                                back = [(p[0] - v_dir_x*shadow_off, p[1] - v_dir_y*shadow_off) for p in rect]
+                                pygame.draw.polygon(s, (8,8,10), back)
+
+                                cx_draw = sum(pt[0] for pt in rect) / 4.0
+                                cy_draw = sum(pt[1] for pt in rect) / 4.0
+                                shrink_inner = 0.94
+                                inner_shrunk = [((pt[0]-cx_draw)*shrink_inner + cx_draw, (pt[1]-cy_draw)*shrink_inner + cy_draw) for pt in rect]
+
+                                pygame.draw.polygon(s, (28,32,36), inner_shrunk)
+                                pygame.draw.polygon(s, (int(brightness-20), int(brightness+6), min(255, int(brightness+30))), inner_shrunk)
+                                pygame.draw.polygon(s, (6,6,8), inner_shrunk, 1)
+                                idx_counter += 1
+
+                except Exception:
+                    continue
 
         # particles
         for p in self.particles:
@@ -1160,7 +1556,7 @@ class Game:
             txt = self.big.render(f"LEVEL {self.level_index + 1}", True, (220, 240, 255))
             s.blit(txt, (WIN_W//2 - txt.get_width()//2, WIN_H//2 - txt.get_height()//2 - 8))
 
-        # LEVEL COMPLETE overlay (restored) + press N prompt (now simple "Press N to continue")
+        # LEVEL COMPLETE overlay (restored) + press N prompt
         if self.level_completed:
             overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
             overlay.fill((0,0,0,160))
@@ -1174,62 +1570,8 @@ class Game:
             if best is not None:
                 best_txt = f"Best: {best:.3f}s"
                 txt3 = self.font.render(best_txt, True, (200,200,200)); s.blit(txt3, (WIN_W//2 - txt3.get_width()//2, WIN_H//2 + 32))
-            # Press N prompt (simplified)
             hint_surf = self.font.render("Press N to continue", True, (240,240,200))
             s.blit(hint_surf, (WIN_W//2 - hint_surf.get_width()//2, WIN_H//2 + 64))
-        
-        # cutscene overlays (vehicle + stars + lighter vignette + fade)
-        if self.cutscene_active:
-            if self.vehicle_pos is not None:
-                v = self.vehicle_pos
-                vpx, vpy, vps, vcz = project_point(Vec3(v.x, v.y, v.z), self.cam_pos, self.forward, self.right, self.up, fov)
-                if isfinite(vpx) and isfinite(vpy) and isfinite(vps) and vps > 0:
-                    # scale the drawable according to projection so it shrinks as it moves away
-                    screen_scale = clamp(1.0 / max(1e-4, vps*0.06), 0.25, 2.2)
-                    wv = int(160 * screen_scale)
-                    hv = int(46 * screen_scale)
-                    cx = int(vpx); cy = int(vpy)
-                    body_rect = pygame.Rect(cx - wv//2, cy - hv//2, wv, hv)
-                    # sleek dark car silhouette
-                    pygame.draw.ellipse(s, (12,16,20), body_rect)
-                    gloss = pygame.Surface((wv, int(hv*0.5)), pygame.SRCALPHA)
-                    pygame.draw.ellipse(gloss, (36,46,56,40), gloss.get_rect())
-                    s.blit(gloss, (body_rect.x, body_rect.y + int(hv*0.06)))
-                    # cockpit window
-                    cock = pygame.Rect(body_rect.x + int(wv*0.18), body_rect.y + int(hv*0.2), int(wv*0.64), int(hv*0.38))
-                    pygame.draw.rect(s, (26,34,40), cock, border_radius=int(hv*0.2))
-                    pygame.draw.rect(s, (70,90,100), cock, 2, border_radius=int(hv*0.2))
-                    # wings
-                    wing_w = int(wv*0.26); wing_h = int(hv*0.34)
-                    left_wing = [(cx - wv//2 + 6, cy), (cx - wv//2 - wing_w, cy - wing_h), (cx - wv//2 - wing_w, cy + wing_h)]
-                    right_wing = [(cx + wv//2 - 6, cy), (cx + wv//2 + wing_w, cy - wing_h), (cx + wv//2 + wing_w, cy + wing_h)]
-                    pygame.draw.polygon(s, (14,18,22), left_wing)
-                    pygame.draw.polygon(s, (14,18,22), right_wing)
-                    pygame.draw.polygon(s, (36,44,52), left_wing, 2)
-                    pygame.draw.polygon(s, (36,44,52), right_wing, 2)
-                    # subtle engine glow (back)
-                    thr_w = int(wv*0.22); thr_h = int(hv*0.28)
-                    thr_surf = pygame.Surface((thr_w, thr_h), pygame.SRCALPHA)
-                    pygame.draw.ellipse(thr_surf, (70,120,200,60), (0,0,thr_w,thr_h))
-                    s.blit(thr_surf, (body_rect.right - int(thr_w*0.6), body_rect.y + hv//2 - thr_h//2))
-            # stars vignette (brighter than before)
-            for (sx, sy, sz, tw) in self.cutscene_stars:
-                br = 200 + 40 * math.sin(time.time()*tw*1.6 + sx*0.001)
-                pygame.draw.circle(s, (int(br), int(br), int(br)), (int(sx), int(sy)), sz)
-            # lighter vignette: still soft edges but not overwhelming
-            vign = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
-            # compute dynamic vignette alpha that reduces with city approach
-            approach_frac = clamp((self.cutscene_bg_scale - 1.0) / 1.6, 0.0, 1.0)
-            vign_alpha = int(80 * (1.0 - approach_frac))  # less dark as approach progresses
-            for i in range(6):
-                a = int(max(0, vign_alpha - i*8))
-                pygame.draw.rect(vign, (0,0,0,a), (i*-8, i*-8, WIN_W + i*16, WIN_H + i*16), border_radius=WIN_W//6)
-            s.blit(vign, (0,0))
-            # fade to black overlay uses fade_alpha
-            fade = pygame.Surface((WIN_W, WIN_H))
-            fade.fill((0,0,0))
-            fade.set_alpha(int(clamp(self.fade_alpha, 0.0, 1.0) * 255))
-            s.blit(fade, (0,0))
 
         # victory/gameover themed screens
         if self.state == 'victory':
@@ -1366,8 +1708,7 @@ class Game:
                                 self.audio['car_loop'].stop()
                         except Exception:
                             pass
-                        self.state = 'menu'
-                        self.selected_level = 0
+                        self.goto_menu()
                     # ignore other inputs while cutscene active
                     continue
 
@@ -1394,21 +1735,20 @@ class Game:
                         if ev.key == pygame.K_g: inputs['sprint'] = True
                         if ev.key == pygame.K_r:
                             self.reset_world(self.level_index)
-                            self.play_music()
                         if ev.key == pygame.K_p:
                             self.state = 'paused' if self.state == 'play' else 'play'
                         if ev.key == pygame.K_ESCAPE:
-                            self.state = 'menu'
+                            self.goto_menu()
                         if ev.key == pygame.K_n and self.level_completed and not self.cutscene_active:
                             # N pressed to continue
                             self.play_sfx('menu_confirm')
                             if self.level_index < len(LEVELS) - 1:
-                                # go to next level
+                                # go to next level (do NOT restart music)
                                 self.level_index += 1
                                 self.reset_world(self.level_index)
-                                self.play_music()
                             else:
                                 # final level -> start cutscene
+                                self.cam_pan_active = True
                                 self.start_end_cutscene()
                     elif ev.type == pygame.KEYUP:
                         if ev.key in (pygame.K_a, pygame.K_LEFT): inputs['left'] = False
@@ -1430,7 +1770,12 @@ class Game:
                         if ev.key == pygame.K_RETURN:
                             self.play_sfx('menu_confirm')
                             if self.menu_index == 0:
-                                self.reset_world(self.selected_level); self.state = 'play'; self.play_music()
+                                self.reset_world(self.selected_level)
+                                # clear inputs so player doesn't move at start
+                                for k in inputs: inputs[k] = False
+                                self.state = 'play'
+                                # start background music explicitly when entering from menu
+                                self.play_music(force=True)
                             elif self.menu_index == 1:
                                 self.state = 'level_select'
                             else:
@@ -1455,7 +1800,10 @@ class Game:
                             self.play_sfx('menu_move')
                         if ev.key == pygame.K_RETURN:
                             self.play_sfx('menu_confirm')
-                            self.reset_world(self.selected_level); self.state = 'play'; self.play_music()
+                            self.reset_world(self.selected_level)
+                            for k in inputs: inputs[k] = False
+                            self.state = 'play'
+                            self.play_music(force=True)
                         if ev.key == pygame.K_ESCAPE:
                             self.state = 'menu'
 
@@ -1465,19 +1813,18 @@ class Game:
 
                 elif self.state == 'victory':
                     if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
-                        self.state = 'menu'
+                        self.goto_menu()
 
                 elif self.state == 'gameover':
                     if ev.type == pygame.KEYDOWN:
                         if ev.key == pygame.K_ESCAPE:
-                            self.state = 'menu'
-                            self.selected_level = 0
+                            self.goto_menu()
                         elif ev.key == pygame.K_RETURN:
                             # pressing start on the final YOU WIN screen should go to level 1
                             self.selected_level = 0
                             self.reset_world(0)
+                            for k in inputs: inputs[k] = False
                             self.state = 'play'
-                            self.play_music()
 
             # mouse rotation while LMB held
             if self.state == 'play' and self.lmb_held and not self.cutscene_active:
