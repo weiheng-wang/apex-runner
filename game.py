@@ -266,6 +266,9 @@ class Game:
         self.cutscene_initial_dist = None
         self.cutscene_car_channel = None
         self.cutscene_stars = self._generate_stars(140)
+        self.cutscene_player_start = None
+        self.cutscene_player_hidden = False
+        self.cutscene_door_progress = 0.0
 
         # music state tracking (so we only restart when explicitly requested)
         self._music_started = False
@@ -278,6 +281,15 @@ class Game:
         self.cam_pan_start_target = None
         self.cam_pan_end_pos = None
         self.cam_pan_end_target = None
+
+        # new flags:
+        # when True, after the camera pan completes we'll start the cutscene
+        self._start_cutscene_after_pan = False
+        # lock controls after completing final level (until exit/reset)
+        self.controls_locked = False
+
+        # skyline per-level scale (level 1 far away, later levels closer)
+        self.skyline_scale = 1.0
 
         self.reset_world(0)
 
@@ -347,6 +359,10 @@ class Game:
             pass
         self.state = 'menu'
         self.selected_level = 0
+        # clear any locks when returning to menu
+        self.controls_locked = False
+        self._start_cutscene_after_pan = False
+        self.cutscene_player_hidden = False
 
     def level_seed(self, idx):
         return self.seed_base + idx * 7919
@@ -573,10 +589,26 @@ class Game:
         self.cutscene_city_target = None
         self.cutscene_initial_dist = None
         self.cutscene_car_channel = None
+        self.cutscene_player_start = None
+        self.cutscene_player_hidden = False
+        self.cutscene_door_progress = 0.0
 
         # reset camera pan
         self.cam_pan_active = False
         self.cam_pan_t = 0.0
+        self.cam_pan_start_pos = None
+        self.cam_pan_start_target = None
+        self.cam_pan_end_pos = None
+        self.cam_pan_end_target = None
+
+        # reset new flags
+        self._start_cutscene_after_pan = False
+        self.controls_locked = False
+
+        # skyline scale: small on early levels (far away), larger on later levels (closer)
+        lvl_frac = (self.level_index / max(1, len(LEVELS)-1))
+        # range from 0.78 (far) to 1.15 (close)
+        self.skyline_scale = lerp(0.78, 1.15, lvl_frac)
 
         pygame.mouse.get_rel()
         self.update_camera_immediate()
@@ -650,7 +682,8 @@ class Game:
             return b
         return None
 
-    def start_end_cutscene(self):
+    def start_end_cutscene(self, preserve_camera=False):
+        # preserve_camera: when True, do not jump the camera position/orientation
         if self.cutscene_active: return
         self.cutscene_active = True
         self.cutscene_t = 0.0
@@ -668,25 +701,39 @@ class Game:
         player_pos = Vec3(self.player_x, self.player_y, self.player_z)
         dir_to_city = normalize(Vec3(city_target.x - player_pos.x, city_target.y - player_pos.y, city_target.z - player_pos.z))
 
-        # position the camera slightly to the right and above the car and keep it fixed (does not follow the car)
-        world_up = Vec3(0,1,0)
-        right_vec = normalize(cross(dir_to_city, world_up))
-        cam_offset_right = 3.0
-        cam_height = 4.0
-        cam_back = 6.0
-        # camera placed relative to the player/car initial position and left fixed
-        self.cam_pos = Vec3(player_pos.x + right_vec.x * cam_offset_right,
-                             player_pos.y + cam_height,
-                             player_pos.z + right_vec.z * cam_offset_right - cam_back)
-        # look toward the city target so the car flies into the background
-        self.cam_target = Vec3(city_target.x, city_target.y, city_target.z)
-        self.forward, self.right, self.up = build_camera_basis(self.cam_pos, self.cam_target)
-        # store yaw/pitch for potential reset later
-        yaw = math.atan2(self.cam_pos.x - self.cam_target.x, self.cam_pos.z - self.cam_target.z)
-        self.cutscene_cam_orig = (self.cam_yaw, self.cam_pitch)
-        self.cam_yaw = yaw
-        self.cam_pitch = radians(6.0)
-        self.cutscene_cam_target_orient = (self.cam_yaw, self.cam_pitch)
+        # If preserve_camera is False, reposition the camera to a cinematic offset.
+        if not preserve_camera:
+            world_up = Vec3(0,1,0)
+            right_vec = normalize(cross(dir_to_city, world_up))
+            cam_offset_right = 12.0  # moved further to the right
+            cam_height = 8.0         # higher so you see more of the skyline
+            cam_back = 36.0          # further back to see more buildings
+            # camera placed relative to the player/car initial position and left fixed
+            # move the camera out to the right and back along -center_dir
+            # we want the camera to face ~45 degrees left from the center line: compute yaw from center_dir and add +45 deg
+            self.cam_pos = Vec3(player_pos.x + right_vec.x * cam_offset_right - dir_to_city.x * cam_back,
+                                 player_pos.y + cam_height,
+                                 player_pos.z + right_vec.z * cam_offset_right - dir_to_city.z * cam_back)
+            # look toward a point ahead along center_dir but rotated left by 45 deg
+            first_b = self.buildings[0] if len(self.buildings) > 0 else None
+            center_dir = dir_to_city
+            if first_b:
+                center_dir = normalize(Vec3(final_b.x - first_b.x, 0.0, final_b.z - first_b.z))
+            yaw_center = math.atan2(center_dir.x, center_dir.z)
+            yaw_left45 = yaw_center + math.radians(45.0)
+            look_dir = Vec3(math.sin(yaw_left45), 0.0, math.cos(yaw_left45))
+            target_dist = 28.0
+            self.cam_target = Vec3(player_pos.x + look_dir.x * target_dist, player_pos.y + 2.0 + 0.0, player_pos.z + look_dir.z * target_dist)
+            self.forward, self.right, self.up = build_camera_basis(self.cam_pos, self.cam_target)
+            yaw = math.atan2(self.cam_pos.x - self.cam_target.x, self.cam_pos.z - self.cam_target.z)
+            self.cutscene_cam_orig = (self.cam_yaw, self.cam_pitch)
+            self.cam_yaw = yaw
+            self.cam_pitch = radians(8.0)
+            self.cutscene_cam_target_orient = (self.cam_yaw, self.cam_pitch)
+        else:
+            # preserve current camera orientation/pos but remember it for restoring later if needed
+            self.cutscene_cam_orig = (self.cam_yaw, self.cam_pitch)
+            self.cutscene_cam_target_orient = (self.cam_yaw, self.cam_pitch)
 
         # vehicle starts just in front of player and moves toward the city target (away from camera)
         self.vehicle_pos = Vec3(player_pos.x + dir_to_city.x * 1.6,
@@ -698,10 +745,9 @@ class Game:
                                                  city_target.z - self.vehicle_pos.z))
         self.cutscene_bg_scale = 1.0
 
-        # put player in vehicle visually
-        self.player_x = self.vehicle_pos.x
-        self.player_y = self.vehicle_pos.y - 1.4
-        self.player_z = self.vehicle_pos.z
+        # put player in vehicle visually (but we'll animate him entering)
+        # store start position for interpolation
+        self.cutscene_player_start = Vec3(self.player_x, self.player_y, self.player_z)
 
         # stop background music and start the cutscene soundtrack (keeps playing until returning to menu)
         try:
@@ -723,6 +769,13 @@ class Game:
                 self.cutscene_car_channel = None
         self.play_sfx('pickup')
         self.fade_alpha = 0.0
+
+        # lock controls during cutscene
+        self.controls_locked = True
+        self.cutscene_player_hidden = False
+        self.cutscene_door_progress = 0.0
+        self.cutscene_phase = 0
+        self.cutscene_t = 0.0
 
     def _save_best_time_for_level(self, lvl, comp_time):
         prev_best = self.best_times.get(lvl, None)
@@ -751,69 +804,134 @@ class Game:
         self.update_camera_immediate()
 
     def update(self, dt, inputs):
-        # handle cutscene movement (camera is fixed; vehicle moves away from camera -> gets smaller)
+        # handle cutscene movement (multi-phase)
         if self.cutscene_active:
             self.cutscene_t += dt
-            lead_time = 0.8
+
+            # phases:
+            # 0 = player walks into car (interpolate)
+            # 0.5 = door/entry animation (player silhouette fades/hidden)
+            # 1 = short pause
+            # 2 = accelerate phase (vehicle moves and shrinks)
+            # 3 = fade to black -> gameover
+
+            # timings (configurable)
+            walk_time = 0.9
+            door_time = 0.7
+            pause_time = 0.45
+            # movement phases start after these
+            move_lead = 0.0  # we re-use earlier approach/accel timings for the flight
             approach_time = 4.0
             accel_time = 3.6
             fade_time = 2.6
 
-            # small lead movement
-            if self.cutscene_t <= lead_time:
-                speed = 8.0 * dt
-                self.vehicle_pos.x += self.vehicle_dir.x * speed
-                self.vehicle_pos.y += self.vehicle_dir.y * speed
-                self.vehicle_pos.z += self.vehicle_dir.z * speed
-                # player rides in vehicle visually
+            # PHASE 0: player walks into car
+            if self.cutscene_phase == 0:
+                if self.cutscene_t <= walk_time:
+                    t = self.cutscene_t / max(1e-6, walk_time)
+                    # interpolate player from roof to just beside/inside vehicle
+                    sx, sy, sz = self.cutscene_player_start.x, self.cutscene_player_start.y, self.cutscene_player_start.z
+                    vx, vy, vz = self.vehicle_pos.x, self.vehicle_pos.y - 0.9, self.vehicle_pos.z  # goal slightly lower inside car
+                    self.player_x = lerp(sx, vx, t)
+                    self.player_y = lerp(sy, vy, t)
+                    self.player_z = lerp(sz, vz, t)
+                    # keep camera fixed (it was panned)
+                    return
+                else:
+                    # move to door animation phase
+                    self.cutscene_phase = 0.5
+                    self.cutscene_t = 0.0
+                    self.cutscene_door_progress = 0.0
+                    return
+
+            # PHASE 0.5: door/entry animation (canopy closes, player fades)
+            if self.cutscene_phase == 0.5:
+                self.cutscene_door_progress += dt / max(1e-6, door_time)
+                self.cutscene_door_progress = clamp(self.cutscene_door_progress, 0.0, 1.0)
+                # keep player positioned near vehicle (slightly inside)
+                self.player_x = self.vehicle_pos.x
+                self.player_y = self.vehicle_pos.y - 0.9
+                self.player_z = self.vehicle_pos.z
+                # at end of door animation, hide player
+                if self.cutscene_door_progress >= 1.0:
+                    self.cutscene_phase = 1
+                    self.cutscene_t = 0.0
+                    self.cutscene_player_hidden = True
+                return
+
+            # PHASE 1: short pause
+            if self.cutscene_phase == 1:
+                if self.cutscene_t >= pause_time:
+                    # begin movement / flight phase
+                    self.cutscene_phase = 2
+                    self.cutscene_t = 0.0
+                    # re-init vehicle_pos to ensure consistent movement start
+                    # vehicle_dir already set
+                else:
+                    return
+
+            # PHASE 2: flight movement
+            if self.cutscene_phase == 2:
+                # reuse earlier timing for gradual acceleration then sustained speed
+                t_since_start = self.cutscene_t
+                lead_time = move_lead
+                # small lead (we keep vehicle stationary for now because door animation handled separately)
+                if t_since_start <= lead_time + 0.0001:
+                    # no movement
+                    return
+                # then approach & accel
+                t_since_lead = t_since_start - lead_time
+                if t_since_lead < approach_time:
+                    t = min(1.0, t_since_lead / approach_time)
+                    speed = 8.0 + 42.0 * t
+                    self.vehicle_pos.x += self.vehicle_dir.x * speed * dt
+                    self.vehicle_pos.y += self.vehicle_dir.y * speed * dt
+                    self.vehicle_pos.z += self.vehicle_dir.z * speed * dt
+                else:
+                    t2 = t_since_lead - approach_time
+                    if t2 < accel_time:
+                        t = min(1.0, t2 / accel_time)
+                        acc_speed = 60.0 + 200.0 * t
+                        self.vehicle_pos.x += self.vehicle_dir.x * acc_speed * dt
+                        self.vehicle_pos.y += self.vehicle_dir.y * acc_speed * dt
+                        self.vehicle_pos.z += self.vehicle_dir.z * acc_speed * dt
+                    else:
+                        # move into fade phase
+                        self.cutscene_phase = 3
+                        self.cutscene_t = 0.0
+                        return
+                # update player (hidden) position to vehicle position for any later uses
                 self.player_x = self.vehicle_pos.x
                 self.player_y = self.vehicle_pos.y - 1.4
                 self.player_z = self.vehicle_pos.z
+                # update fade_alpha in later phase; for realism we may slightly increase sky scale or do nothing
                 return
 
-            t_since_lead = self.cutscene_t - lead_time
-            if t_since_lead < approach_time:
-                t = min(1.0, t_since_lead / approach_time)
-                speed = 10.0 + 48.0 * t
-                self.vehicle_pos.x += self.vehicle_dir.x * speed * dt
-                self.vehicle_pos.y += self.vehicle_dir.y * speed * dt
-                self.vehicle_pos.z += self.vehicle_dir.z * speed * dt
-                self.player_x = self.vehicle_pos.x
-                self.player_y = self.vehicle_pos.y - 1.4
-                self.player_z = self.vehicle_pos.z
+            # PHASE 3: fade to black
+            if self.cutscene_phase == 3:
+                # reuse fade_time
+                self.cutscene_t += dt
+                self.fade_alpha = clamp(self.cutscene_t / max(1e-6, fade_time), 0.0, 1.0)
+                if self.cutscene_t >= fade_time:
+                    # finish cutscene
+                    self.cutscene_active = False
+                    try:
+                        if self.cutscene_car_channel:
+                            self.cutscene_car_channel.stop()
+                    except Exception:
+                        pass
+                    try:
+                        if self.audio.get('car_loop', None):
+                            self.audio['car_loop'].stop()
+                    except Exception:
+                        pass
+                    # go to YOU WIN screen
+                    self.state = 'gameover'
+                    self.selected_level = 0
+                    # unlock controls only when player returns to menu or restarts
+                    self.controls_locked = False
+                    self.cutscene_player_hidden = False
                 return
-
-            t2 = t_since_lead - approach_time
-            if t2 < accel_time:
-                t = min(1.0, t2 / accel_time)
-                acc_speed = 60.0 + 200.0 * t
-                self.vehicle_pos.x += self.vehicle_dir.x * acc_speed * dt
-                self.vehicle_pos.y += self.vehicle_dir.y * acc_speed * dt
-                self.vehicle_pos.z += self.vehicle_dir.z * acc_speed * dt
-                self.player_x = self.vehicle_pos.x
-                self.player_y = self.vehicle_pos.y - 1.4
-                self.player_z = self.vehicle_pos.z
-                return
-
-            # fade to black phase
-            t3 = t2 - accel_time
-            self.fade_alpha = clamp(t3 / fade_time, 0.0, 1.0)
-            if t3 >= fade_time:
-                self.cutscene_active = False
-                try:
-                    if self.cutscene_car_channel:
-                        self.cutscene_car_channel.stop()
-                except Exception:
-                    pass
-                try:
-                    if self.audio.get('car_loop', None):
-                        self.audio['car_loop'].stop()
-                except Exception:
-                    pass
-                # go to YOU WIN screen
-                self.state = 'gameover'
-                self.selected_level = 0
-            return
 
         # camera pan handling after level complete
         if self.cam_pan_active:
@@ -832,6 +950,11 @@ class Game:
             self.forward, self.right, self.up = build_camera_basis(self.cam_pos, self.cam_target)
             if self.cam_pan_t >= self.cam_pan_dur:
                 self.cam_pan_active = False
+                # if we were asked to start the cutscene after pan, do it now, preserving the camera
+                if self._start_cutscene_after_pan:
+                    self._start_cutscene_after_pan = False
+                    # start cutscene but preserve the panned camera (so cutscene camera stays where pan left it)
+                    self.start_end_cutscene(preserve_camera=True)
             return
 
         if self.state != 'play': return
@@ -1017,22 +1140,50 @@ class Game:
             self.completion_time = time.time() - self.time_start
             self._save_best_time_for_level(self.level_index, self.completion_time)
             self.play_sfx('level_end')
-            # start smooth camera pan to a position slightly above and to the right of the player
+
+            # compute cinematic pan end using center-line and offsets:
+            first_b = self.buildings[0] if len(self.buildings) > 0 else None
+            center_dir = Vec3(0.0, 0.0, 1.0)
+            if first_b:
+                center_dir = normalize(Vec3(last.x - first_b.x, 0.0, last.z - first_b.z))
+            world_up = Vec3(0,1,0)
+            right_vec = normalize(cross(center_dir, world_up))
+
+            # start pan from current camera
             self.cam_pan_t = 0.0
-            self.cam_pan_dur = 1.0
+            # slightly longer pan for cinematic feeling
+            self.cam_pan_dur = 1.4
+
             self.cam_pan_start_pos = Vec3(self.cam_pos.x, self.cam_pos.y, self.cam_pos.z)
             self.cam_pan_start_target = Vec3(self.cam_target.x, self.cam_target.y, self.cam_target.z)
-            # end pos: a bit above and to the right, looking ahead
-            end_pos = Vec3(self.player_x + 3.6, self.player_y + 5.2, self.player_z - 6.0)
-            end_target = Vec3(self.player_x + 10.0, self.player_y + 2.0, self.player_z + 18.0)
+
+            # Place cam further back and to the right so you can see more buildings
+            pan_right = 12.0
+            pan_height = 8.0
+            pan_back = 36.0
+            end_pos = Vec3(self.player_x + right_vec.x * pan_right - center_dir.x * pan_back,
+                           self.player_y + pan_height,
+                           self.player_z + right_vec.z * pan_right - center_dir.z * pan_back)
+            # camera should look 45 degrees left from the center direction
+            yaw_center = math.atan2(center_dir.x, center_dir.z)
+            yaw_left45 = yaw_center + math.radians(45.0)
+            look_dir = Vec3(math.sin(yaw_left45), 0.0, math.cos(yaw_left45))
+            end_target = Vec3(self.player_x + look_dir.x * 22.0, self.player_y + 2.5, self.player_z + look_dir.z * 22.0)
+
             self.cam_pan_end_pos = end_pos
             self.cam_pan_end_target = end_target
+
+            # If this is the final level, lock controls now (will be fully enforced in the event loop).
+            if self.level_index >= len(LEVELS) - 1:
+                self.controls_locked = True
             return
+
+        # nothing else in update
 
     def draw_skyline_background(self):
         s = self.screen
         layers = 3
-        scale = 1.0
+        scale = self.skyline_scale
         for layer in range(layers):
             count = int((28 - layer*6) * (0.9 + (scale-1.0)*0.06))
             y_base = WIN_H * (0.18 + layer * 0.06) - int((scale-1.0)*18 * layer)
@@ -1084,6 +1235,14 @@ class Game:
             color = (int(8 + a*12), int(12 + a*28), int(30 + a*60))
             pygame.draw.rect(s, color, (0, int(i * WIN_H / 240), WIN_W, int(WIN_H / 240)+1))
 
+        # if cutscene is active, draw twinkling stars in the sky
+        if self.cutscene_active:
+            now = time.time()
+            for (sx, sy, sz, tw) in self.cutscene_stars:
+                br = 120 + 80 * math.sin(now*tw*0.8 + sx*0.0009)
+                # slightly dimmer than the gameover stars so the skyline still reads
+                pygame.draw.circle(s, (int(br*0.9), int(br*0.9), int(br*0.95)), (int(sx), int(sy+40)), sz)
+
         self.draw_skyline_background()
 
         fov = 900.0
@@ -1134,8 +1293,10 @@ class Game:
         ppos = Vec3(self.player_x, self.player_y + PLAYER_HEIGHT*0.25, self.player_z)
         psx, psy, psc, pcz = project_point(ppos, self.cam_pos, self.forward, self.right, self.up, fov)
         player_proj = None
-        if isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0:
-            player_proj = (psx, psy, psc, pcz)
+        # hide player during cutscene when inside car
+        if not (self.cutscene_active and self.cutscene_player_hidden):
+            if isfinite(psx) and isfinite(psy) and isfinite(pcz) and pcz > 0:
+                player_proj = (psx, psy, psc, pcz)
 
         vehicle_proj = None
         if self.cutscene_active and self.vehicle_pos is not None:
@@ -1216,33 +1377,71 @@ class Game:
                     vpx, vpy, vps, vcz = ent[3]
                     if not (isfinite(vpx) and isfinite(vpy) and isfinite(vcz) and vcz > 0):
                         continue
-                    # screen scale based on projection to create realistic shrink
-                    screen_scale = clamp(1.0 / max(1e-4, vps*0.06), 0.08, 3.2)
-                    wv = int(240 * screen_scale)
-                    hv = int(64 * screen_scale)
+
+                    # FIXED: use projection scale (vps) * factor so object becomes SMALLER when CZ INCREASES (further away)
+                    # earlier code inverted this; now scale is proportional to vps.
+                    screen_scale = clamp(vps * 0.06, 0.02, 3.2)
+
+                    wv = int(320 * screen_scale)   # slightly larger base so the craft looks sleeker
+                    hv = int(88 * screen_scale)
                     cx = int(vpx); cy = int(vpy)
 
-                    # sleek futuristic car silhouette composed of layered polygons
-                    body = [(cx - wv//2, cy), (cx - int(wv*0.12), cy - int(hv*0.45)), (cx + int(wv*0.28), cy - int(hv*0.5)), (cx + wv//2, cy),
-                            (cx + int(wv*0.28), cy + int(hv*0.28)), (cx - int(wv*0.18), cy + int(hv*0.28))]
-                    pygame.draw.polygon(s, (18,20,26), body)
-                    # glossy top
-                    top = [(cx - int(wv*0.08), cy - int(hv*0.28)), (cx + int(wv*0.22), cy - int(hv*0.34)), (cx + int(wv*0.12), cy - int(hv*0.08)), (cx - int(wv*0.02), cy - int(hv*0.02))]
-                    pygame.draw.polygon(s, (36,48,60), top)
-                    # cockpit window
-                    cock = pygame.Rect(cx - int(wv*0.06), cy - int(hv*0.28), int(wv*0.36), int(hv*0.36))
-                    pygame.draw.ellipse(s, (40,60,72), cock)
-                    pygame.draw.ellipse(s, (90,140,180), cock, 2)
-                    # wings / fins
-                    wing_l = [(cx - wv//2 + 6, cy), (cx - wv//2 - int(wv*0.18), cy - int(hv*0.32)), (cx - wv//2 - int(wv*0.18), cy + int(hv*0.32))]
-                    wing_r = [(cx + wv//2 - 6, cy), (cx + wv//2 + int(wv*0.18), cy - int(hv*0.32)), (cx + wv//2 + int(wv*0.18), cy + int(hv*0.32))]
-                    pygame.draw.polygon(s, (16,18,22), wing_l)
-                    pygame.draw.polygon(s, (16,18,22), wing_r)
-                    # subtle engine glow (back)
-                    thr_w = int(wv*0.22); thr_h = int(hv*0.28)
-                    thr_surf = pygame.Surface((thr_w, thr_h), pygame.SRCALPHA)
-                    pygame.draw.ellipse(thr_surf, (70,140,220,80), (0,0,thr_w,thr_h))
-                    s.blit(thr_surf, (cx + int(wv*0.22), cy - thr_h//2))
+                    # Futuristic flying vehicle silhouette
+                    # Main hull (sleek, low, elongated)
+                    hull = [
+                        (cx - int(wv*0.52), cy),
+                        (cx - int(wv*0.22), cy - int(hv*0.42)),
+                        (cx - int(wv*0.00), cy - int(hv*0.5)),
+                        (cx + int(wv*0.28), cy - int(hv*0.42)),
+                        (cx + int(wv*0.52), cy),
+                        (cx + int(wv*0.28), cy + int(hv*0.22)),
+                        (cx - int(wv*0.12), cy + int(hv*0.26)),
+                    ]
+                    pygame.draw.polygon(s, (18,20,24), hull)
+                    # canopy/glass
+                    canopy = [
+                        (cx - int(wv*0.18), cy - int(hv*0.36)),
+                        (cx + int(wv*0.18), cy - int(hv*0.36)),
+                        (cx + int(wv*0.12), cy - int(hv*0.06)),
+                        (cx - int(wv*0.06), cy - int(hv*0.06)),
+                    ]
+                    pygame.draw.polygon(s, (36,48,62), canopy)
+                    pygame.draw.polygon(s, (90,150,200), canopy, 2)
+                    # rear engine glows
+                    for i in range(2):
+                        thr_w = int(wv*0.18)
+                        thr_h = int(hv*0.28)
+                        thr_surf = pygame.Surface((thr_w, thr_h), pygame.SRCALPHA)
+                        # pulsate slightly using time so it's alive
+                        pulse = int(80 + 60 * math.sin(time.time()*6.0 + i*1.2))
+                        pygame.draw.ellipse(thr_surf, (60, 140, 240, pulse), (0,0,thr_w,thr_h))
+                        s.blit(thr_surf, (cx + int(wv*0.26) + i*int(wv*0.03), cy - thr_h//2))
+                    # front lights
+                    left_light = (cx - int(wv*0.42), cy - int(hv*0.05))
+                    right_light = (cx + int(wv*0.42) - 4, cy - int(hv*0.05))
+                    pygame.draw.circle(s, (160,220,255), left_light, max(1, int(6*screen_scale)))
+                    pygame.draw.circle(s, (160,220,255), right_light, max(1, int(6*screen_scale)))
+                    # subtle underside glow
+                    ugw = int(wv*0.7); ugh = int(hv*0.24)
+                    ug = pygame.Surface((ugw, ugh), pygame.SRCALPHA)
+                    pygame.draw.ellipse(ug, (40,90,160,90), (0,0,ugw,ugh))
+                    s.blit(ug, (cx - ugw//2, cy + int(hv*0.18)))
+
+                    # if in door animation (cutscene_phase == 0.5), draw canopy closing visual using door progress
+                    if self.cutscene_active and self.cutscene_phase == 0.5:
+                        # draw a canopy overlay that grows down to cover cockpit
+                        prog = clamp(self.cutscene_door_progress, 0.0, 1.0)
+                        cover_h = int(hv * 0.44 * prog)
+                        cover_surf = pygame.Surface((int(wv*0.36), cover_h), pygame.SRCALPHA)
+                        alpha = int(200 * prog)
+                        cover_surf.fill((10,14,18, alpha))
+                        s.blit(cover_surf, (cx - int(wv*0.18), cy - int(hv*0.36)))
+                        # silhouette: a small dark oval that fades as prog approaches 1.0
+                        silpha = int(200 * (1.0 - prog))
+                        if silpha > 4:
+                            sil_surf = pygame.Surface((int(wv*0.12), int(hv*0.18)), pygame.SRCALPHA)
+                            pygame.draw.ellipse(sil_surf, (6,6,8, silpha), sil_surf.get_rect())
+                            s.blit(sil_surf, (cx - int(wv*0.06), cy - int(hv*0.22)))
                 except Exception:
                     pass
                 continue
@@ -1558,6 +1757,7 @@ class Game:
 
         # LEVEL COMPLETE overlay (restored) + press N prompt
         if self.level_completed:
+            # show overlay while waiting for N — if N is pressed we clear level_completed immediately (see event handler)
             overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
             overlay.fill((0,0,0,160))
             s.blit(overlay,(0,0))
@@ -1604,7 +1804,19 @@ class Game:
             hint = self.font.render("Press Esc to return to the main menu.", True, (160,180,200))
             s.blit(hint, (WIN_W//2 - hint.get_width()//2, WIN_H//2 + 18))
 
+        # during the cutscene apply fade overlay if any
+        if self.cutscene_active and self.fade_alpha > 0.001:
+            ov = pygame.Surface((WIN_W, WIN_H))
+            alpha = int(clamp(self.fade_alpha, 0.0, 1.0) * 255)
+            ov.set_alpha(alpha)
+            ov.fill((0,0,0))
+            s.blit(ov, (0,0))
+
     def draw_ui(self, mantle_available=False):
+        # Hide cinematic HUD elements during cutscene for a clean cinematic feel
+        if self.cutscene_active:
+            return
+
         hud_x, hud_y = 12, 12
         lvl = self.level_index + 1
         elapsed = time.time() - self.time_start
@@ -1623,9 +1835,20 @@ class Game:
             info = self.font.render("Best: ---", True, (160,180,200))
             self.screen.blit(info, (hud_x, hud_y + 22))
 
-        controls = "WASD/Arrow Keys (move), Space (jump), E (mantle), R (reset)"
-        surf2 = self.font.render(controls, True, (170,190,210))
-        self.screen.blit(surf2, (12, WIN_H - 26))
+        # controls text: made cleaner
+        controls = "WASD / Arrow Keys  Space: Jump  E: Mantle  R: Reset"
+        ctr_surf = self.font.render(controls, True, (170,190,210))
+        # draw a slightly transparent box behind controls (same feel as the level start overlay)
+        padding_x = 12
+        padding_y = 8
+        w_box = ctr_surf.get_width() + padding_x*2
+        h_box = ctr_surf.get_height() + padding_y*2
+        box_surf = pygame.Surface((w_box, h_box), pygame.SRCALPHA)
+        box_surf.fill((6,6,10,180))  # same alpha as level start overlay
+        # subtle border
+        pygame.draw.rect(box_surf, (18,18,20,220), (0,0,w_box,h_box), 2, border_radius=6)
+        self.screen.blit(box_surf, (12, WIN_H - 26 - padding_y - 2))
+        self.screen.blit(ctr_surf, (12 + padding_x, WIN_H - 26 - padding_y))
 
         if self.sprint_energy < SPRINT_MAX_ENERGY - 1e-3 or self.sprinting:
             bar_w = 220; bar_h = 12
@@ -1713,51 +1936,62 @@ class Game:
                     continue
 
                 if self.state == 'play':
+                    # If controls are locked (after final-level completion) we still want to allow
+                    # ESC to return to menu and N to continue, but we ignore movement / camera / reset / sprint / mantle.
                     if ev.type == pygame.MOUSEBUTTONDOWN:
-                        if ev.button == 1:
-                            self.lmb_held = True
-                            pygame.mouse.get_rel()
-                        elif ev.button == 4:
-                            self.cam_dist = clamp(self.cam_dist * 0.92, CAM_DIST_MIN, CAM_DIST_MAX)
-                        elif ev.button == 5:
-                            self.cam_dist = clamp(self.cam_dist / 0.92, CAM_DIST_MIN, CAM_DIST_MAX)
+                        if not self.controls_locked:
+                            if ev.button == 1:
+                                self.lmb_held = True
+                                pygame.mouse.get_rel()
+                            elif ev.button == 4:
+                                self.cam_dist = clamp(self.cam_dist * 0.92, CAM_DIST_MIN, CAM_DIST_MAX)
+                            elif ev.button == 5:
+                                self.cam_dist = clamp(self.cam_dist / 0.92, CAM_DIST_MIN, CAM_DIST_MAX)
                     elif ev.type == pygame.MOUSEBUTTONUP:
-                        if ev.button == 1:
+                        if not self.controls_locked and ev.button == 1:
                             self.lmb_held = False
                             pygame.mouse.get_rel()
                     elif ev.type == pygame.KEYDOWN:
-                        if ev.key in (pygame.K_a, pygame.K_LEFT): inputs['left'] = True
-                        if ev.key in (pygame.K_d, pygame.K_RIGHT): inputs['right'] = True
-                        if ev.key in (pygame.K_w, pygame.K_UP): inputs['up'] = True
-                        if ev.key in (pygame.K_s, pygame.K_DOWN): inputs['down'] = True
-                        if ev.key == pygame.K_SPACE: inputs['jump'] = True
-                        if ev.key == pygame.K_e: inputs['mantle'] = True
-                        if ev.key == pygame.K_g: inputs['sprint'] = True
-                        if ev.key == pygame.K_r:
-                            self.reset_world(self.level_index)
-                        if ev.key == pygame.K_p:
-                            self.state = 'paused' if self.state == 'play' else 'play'
+                        # movement & action keys only if not locked
+                        if not self.controls_locked:
+                            if ev.key in (pygame.K_a, pygame.K_LEFT): inputs['left'] = True
+                            if ev.key in (pygame.K_d, pygame.K_RIGHT): inputs['right'] = True
+                            if ev.key in (pygame.K_w, pygame.K_UP): inputs['up'] = True
+                            if ev.key in (pygame.K_s, pygame.K_DOWN): inputs['down'] = True
+                            if ev.key == pygame.K_SPACE: inputs['jump'] = True
+                            if ev.key == pygame.K_e: inputs['mantle'] = True
+                            if ev.key == pygame.K_g: inputs['sprint'] = True
+                            if ev.key == pygame.K_r:
+                                self.reset_world(self.level_index)
+                            if ev.key == pygame.K_p:
+                                self.state = 'paused' if self.state == 'play' else 'play'
+                        # ESC always allowed to go to menu
                         if ev.key == pygame.K_ESCAPE:
                             self.goto_menu()
+                        # N pressed to continue; allowed even if controls locked (that's the point)
                         if ev.key == pygame.K_n and self.level_completed and not self.cutscene_active:
                             # N pressed to continue
                             self.play_sfx('menu_confirm')
+                            # hide level complete overlay immediately
+                            self.level_completed = False
                             if self.level_index < len(LEVELS) - 1:
                                 # go to next level (do NOT restart music)
                                 self.level_index += 1
                                 self.reset_world(self.level_index)
                             else:
-                                # final level -> start cutscene
+                                # final level -> start camera pan then cutscene after pan completes
+                                # ensure a pan was prepared during completion; start it now and flag to start cutscene after pan.
                                 self.cam_pan_active = True
-                                self.start_end_cutscene()
+                                self._start_cutscene_after_pan = True
                     elif ev.type == pygame.KEYUP:
-                        if ev.key in (pygame.K_a, pygame.K_LEFT): inputs['left'] = False
-                        if ev.key in (pygame.K_d, pygame.K_RIGHT): inputs['right'] = False
-                        if ev.key in (pygame.K_w, pygame.K_UP): inputs['up'] = False
-                        if ev.key in (pygame.K_s, pygame.K_DOWN): inputs['down'] = False
-                        if ev.key == pygame.K_SPACE: inputs['jump'] = False
-                        if ev.key == pygame.K_e: inputs['mantle'] = False
-                        if ev.key == pygame.K_g: inputs['sprint'] = False
+                        if not self.controls_locked:
+                            if ev.key in (pygame.K_a, pygame.K_LEFT): inputs['left'] = False
+                            if ev.key in (pygame.K_d, pygame.K_RIGHT): inputs['right'] = False
+                            if ev.key in (pygame.K_w, pygame.K_UP): inputs['up'] = False
+                            if ev.key in (pygame.K_s, pygame.K_DOWN): inputs['down'] = False
+                            if ev.key == pygame.K_SPACE: inputs['jump'] = False
+                            if ev.key == pygame.K_e: inputs['mantle'] = False
+                            if ev.key == pygame.K_g: inputs['sprint'] = False
 
                 elif self.state == 'menu':
                     if ev.type == pygame.KEYDOWN:
@@ -1827,13 +2061,18 @@ class Game:
                             self.state = 'play'
 
             # mouse rotation while LMB held
-            if self.state == 'play' and self.lmb_held and not self.cutscene_active:
+            if self.state == 'play' and self.lmb_held and not self.cutscene_active and not self.controls_locked:
                 mx, my = pygame.mouse.get_rel()
                 self.cam_yaw += -mx * self.yaw_sens
                 self.cam_pitch += -my * self.pitch_sens
                 self.cam_pitch = clamp(self.cam_pitch, CAM_PITCH_MIN, CAM_PITCH_MAX)
             else:
                 pygame.mouse.get_rel()
+
+            # If controls are locked, ensure inputs are cleared so movement stops immediately.
+            if self.controls_locked:
+                for k in inputs:
+                    inputs[k] = False
 
             # update & draw
             if self.state == 'play':
