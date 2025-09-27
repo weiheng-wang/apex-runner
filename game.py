@@ -1,6 +1,3 @@
-# apex_runner_cutscene_audio_ogg.py
-# All audio is OGG-only (assets/*.ogg). If .ogg files are missing, game will be silent for those items.
-
 import pygame, sys, math, random, time, os
 from math import radians, sqrt, isfinite
 
@@ -270,7 +267,7 @@ class Game:
         self.cutscene_player_hidden = False
         self.cutscene_door_progress = 0.0
 
-        # music state tracking (so we only restart when explicitly requested)
+        # music state tracking
         self._music_started = False
 
         # camera pan state after level complete (smooth shift)
@@ -1178,7 +1175,6 @@ class Game:
                 self.controls_locked = True
             return
 
-        # nothing else in update
 
     def draw_skyline_background(self):
         s = self.screen
