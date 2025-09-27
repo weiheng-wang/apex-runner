@@ -749,7 +749,7 @@ class Game:
         # store start position for interpolation
         self.cutscene_player_start = Vec3(self.player_x, self.player_y, self.player_z)
 
-        # stop background music and start the cutscene soundtrack (keeps playing until returning to menu)
+        '''# stop background music and start the cutscene soundtrack (keeps playing until returning to menu)
         try:
             self.stop_music()
         except Exception:
@@ -759,7 +759,7 @@ class Game:
                 pygame.mixer.music.load(self.audio['cutscene_music_path'])
                 pygame.mixer.music.play(-1)
             except Exception:
-                pass
+                pass'''
 
         # play car loop if available (looping)
         if self.audio.get('car_loop'):
