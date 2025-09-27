@@ -17,7 +17,7 @@ CAM_DIST_MAX = 72.0
 GRAVITY = -32.0
 JUMP_V = 14.0
 WALK_SPEED = 10.6
-SPRINT_SPEED = 22.0
+SPRINT_SPEED = 20.0
 PLAYER_HEIGHT = 1.9
 
 # Player render base
@@ -1832,7 +1832,7 @@ class Game:
             self.screen.blit(info, (hud_x, hud_y + 22))
 
         # controls text: made cleaner
-        controls = "WASD / Arrow Keys  Space: Jump  E: Mantle  R: Reset"
+        controls = "WASD / Arrow Keys  Space: Jump  G: Sprint  E: Mantle  R: Reset"
         ctr_surf = self.font.render(controls, True, (170,190,210))
         # draw a slightly transparent box behind controls (same feel as the level start overlay)
         padding_x = 12
