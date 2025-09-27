@@ -13,9 +13,11 @@ Run the game script:
 ## Controls
    - WASD/Arrow Keys to move
    - Space to jump
+   - G to sprint
+   - E to mantle
    - R to restart level
    - Left click and drag to move camera
    - Scroll to zoom
 
 ## Screenshot
-<img width="1198" height="719" alt="screenshot copy" src="https://github.com/user-attachments/assets/d61108e1-62fa-4e72-898d-26d6f57ec093" />
+<img width="1198" height="718" alt="screenshot" src="https://github.com/user-attachments/assets/64ee6916-da67-4eec-833b-b3d73154c6d1" />
